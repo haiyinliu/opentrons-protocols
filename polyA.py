@@ -18,7 +18,7 @@ def run(protocol: protocol_api.ProtocolContext):
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
     
     # TESTING PARAMETERS
-    DRY_RUN = 0.01      # use 0.01 to shorten the wait times if it is dry run
+    DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
     TIPRECYCLE = True   # change to False if not a dry run (eg don't recycle tips)
 
     skip_mixbeadsandrna = False     # Toggle when testing certain blocks, same below
@@ -51,15 +51,15 @@ def run(protocol: protocol_api.ProtocolContext):
     
     # COLUMN 2 
     mag_module = protocol.load_module('magneticBlockV1', 'A2')
-    sample_plate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "B2")
-    reservoir = protocol.load_labware('nest_12_reservoir_15ml', 'D2')
+    tiprack_50ul = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B2')
+    reservoir = protocol.load_labware('nest_12_reservoir_15ml', 'C2')
+    sample_plate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "D2")
      
     # COLUMN 3 
-    tiprack_50ul = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'A3')
-    tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B3')
-    tiprack_200ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C3')
+    tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A3')
+    tiprack_200ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B3')
     if TIPRECYCLE:
-        waste = protocol.load_trash_bin("C1")
+        waste = protocol.load_trash_bin("C3")
     else:
         waste_chute = protocol.load_waste_chute()
      
@@ -74,7 +74,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # reagent plate
     # binding buffer
     rna_binding_buffer = [
-     reagent_plate.columns_by_name()[name] for name in ['2', '3']]  # RNA Binding Buffer (on ice)
+     reagent_plate.columns_by_name()[name] for name in ['1', '2']]  # RNA Binding Buffer (on ice)
     
     # binding buffer (2X 50 uL per sample) - i
     for index, column in enumerate(rna_binding_buffer):
@@ -90,9 +90,10 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # reagent reservoir
     ### TODO check if volume correct - wash buffer 180 uL per sample - for three washes
-    wash_buffer = [reservoir.wells_by_name()[well] for well in ['A1', 'A2', 'A3']]
+    wash_buffer = [reservoir.wells_by_name()[well] for well in ['A1','A2']]
     for well in wash_buffer:
         well.liq_vol = 180*NUM_COLUMNS*p1000m.channels + deadvol_reservoir
+    
     [tris] = [reservoir.wells_by_name()[well] for well in ['A4']]
     waste = [reservoir.wells_by_name()[well] for well in ['A9', 'A10', 'A11', 'A12']]
 
@@ -104,7 +105,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     wash_buffer_wells = protocol.define_liquid(name="wash buffer", 
                                                description="wash buffer, 180µl * sample * number of washes", 
-                                               display_color="#FF0000") # Red
+                                               display_color="#0000FF") # Blue
     wash_buffer_vol = 180 * NUM_SAMPLES * 3
 
     tris_wells = protocol.define_liquid(name="Tris buffer",
@@ -118,18 +119,19 @@ def run(protocol: protocol_api.ProtocolContext):
     binding_buffer_vol = 50 * NUM_SAMPLES
 
     #======== LOADING LIQUIDS ========
-    for well in reservoir.columns()[0]:
-        well.load_liquid(liquid=wash_buffer_wells, volume=wash_buffer_vol)
-
     for well in sample_plate.wells()[:NUM_SAMPLES]:
         well.load_liquid(liquid=sample_wells, volume=sample_vol)
 
-    for well in reagent_plate.columns()[0]:
+    for column in reservoir.columns()[0:2]:
+        for well in column: 
+            well.load_liquid(liquid=wash_buffer_wells, volume=wash_buffer_vol)
+
+    for well in reservoir.columns()[3]:
         well.load_liquid(liquid=tris_wells, volume=tris_vol)
 
-    for well in reagent_plate.columns()[1]:
+    for well in reagent_plate.columns()[0]:
         well.load_liquid(liquid=binding_buffer_wells, volume=binding_buffer_vol)
-     
+
     #======== RUN SETUP ========
     # HELPER FUNCTIONS 
     # FUNCTION 1: PIPETTE PICK UP
@@ -143,14 +145,14 @@ def run(protocol: protocol_api.ProtocolContext):
             pipette.pick_up_tip()
 
     # FUNCTION 2: BEAD MIXING
-    def bead_mixing(reps, vol, aspirate_rate=1, dispense_rate=1):
+    def bead_mixing(reps, vol, aspirate_rate=0.7, dispense_rate=1.5):
         for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
             pick_up_or_refill(p1000m)
             
             # number of reps for mixing
             for rep in range(reps):
                 p1000m.aspirate(vol, column[0].bottom(1.5), rate=aspirate_rate)
-                p1000m.dispense(vol, column[0].bottom(8), rate=dispense_rate)
+                p1000m.dispense(vol, column[0].bottom(3), rate=dispense_rate)
 
                 if rep == reps - 1:
                     # side touch with blowout after last mix
@@ -158,7 +160,7 @@ def run(protocol: protocol_api.ProtocolContext):
                         column[0].top(-2).move(types.Point(
                         x=column[0].diameter / 2, y=0, z=0)))
                     p1000m.blow_out()
-                    protocol.delay(seconds=1)
+                    protocol.delay(seconds=2)
                     p1000m.move_to(column[0].top())
             p1000m.drop_tip()
 
@@ -242,7 +244,7 @@ def run(protocol: protocol_api.ProtocolContext):
         thermocycler.open_lid()
         
         # STEP 13: Remove tubes from thermocycler
-        protocol.move_labware(labware=sample_plate, new_location="B2", use_gripper=True)
+        protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
         thermocycler.set_block_temperature(temperature=20)
 
     # STEP 14-17: Resuspend beads on the bench, allow the RNA to bind to the beads, repeat 1x
@@ -275,7 +277,7 @@ def run(protocol: protocol_api.ProtocolContext):
         for repeat in range(2):
             
             # move plate off magnet for washes
-            protocol.move_labware(labware=sample_plate, new_location="B2", use_gripper=True)
+            protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
             # add wash buffer to all bead pellets
             pick_up_or_refill(p1000m)
@@ -344,7 +346,7 @@ def run(protocol: protocol_api.ProtocolContext):
                         p1000m.aspirate(25, loc)
                     p1000m.drop_tip()
             
-    protocol.move_labware(labware=sample_plate, new_location="B2", use_gripper=True)
+    
 
     # STEP 26: adding Tris for elution
     protocol.comment("Step 26: First elution with Tris, mix 10 times.")
@@ -381,7 +383,7 @@ def run(protocol: protocol_api.ProtocolContext):
         thermocycler.set_block_temperature(25)
         thermocycler.open_lid()
         # STEP 28: Remove tubes from thermocycler 
-        protocol.move_labware(labware=sample_plate, new_location="B2", use_gripper=True)
+        protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
     
     # STEP 29-32: Add 50 μl of RNA Binding Buffer (2X), mix and re-bind, repeat 1x
     
@@ -433,7 +435,7 @@ def run(protocol: protocol_api.ProtocolContext):
     if not skip_supremoval2:
         remove_sup(75,75)
 
-    protocol.move_labware(labware=sample_plate, new_location="B2", use_gripper=True)
+    protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
     # STEP 36: Add final wash buffer and mix
     protocol.comment("Step 36: Wash the beads once with 200 μl of Wash Buffer, mix thoroughly.")
@@ -491,7 +493,7 @@ def run(protocol: protocol_api.ProtocolContext):
                 p1000m.aspirate(25, loc)
             p1000m.drop_tip()
 
-    protocol.move_labware(labware=sample_plate, new_location="B2", use_gripper=True)
+    protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
     # STEP 40: Last elution
     ## TODO This might need to be skipped to be done by hand
