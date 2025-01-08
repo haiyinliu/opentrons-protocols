@@ -346,7 +346,7 @@ def run(protocol: protocol_api.ProtocolContext):
                         p1000m.aspirate(25, loc)
                     p1000m.drop_tip()
             
-    
+    protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
     # STEP 26: adding Tris for elution
     protocol.comment("Step 26: First elution with Tris, mix 10 times.")
