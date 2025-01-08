@@ -21,10 +21,10 @@ def run(protocol: protocol_api.ProtocolContext):
     DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
     TIPRECYCLE = True   # change to False if not a dry run (eg don't recycle tips)
 
-    skip_mixbeadsandrna = False     # Toggle when testing certain blocks, same below
+    skip_mixbeadsandrna = True     # Toggle when testing certain blocks, same below
     skip_thermocycler1 = True
     skip_beadmix = True
-    skip_supremoval = True
+    skip_supremoval = False
     skip_washes = True
     skip_1stelution = True
     skip_thermocycler2 = True
@@ -145,7 +145,7 @@ def run(protocol: protocol_api.ProtocolContext):
             pipette.pick_up_tip()
 
     # FUNCTION 2: BEAD MIXING
-    def bead_mixing(reps, vol, aspirate_rate=0.7, dispense_rate=1.5):
+    def bead_mixing(reps, vol, aspirate_rate=0.8, dispense_rate=2):
         for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
             pick_up_or_refill(p1000m)
             
@@ -160,29 +160,28 @@ def run(protocol: protocol_api.ProtocolContext):
                         column[0].top(-2).move(types.Point(
                         x=column[0].diameter / 2, y=0, z=0)))
                     p1000m.blow_out()
-                    protocol.delay(seconds=2)
+                    protocol.delay(seconds=1.5)
                     p1000m.move_to(column[0].top())
             p1000m.drop_tip()
 
     # FUNCTION 3: REMOVE SUPERNATANT
-    def remove_sup(volume1,volume2):
-            for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
-                pick_up_or_refill(p1000m)
-                
-                p1000m.move_to(column[0].top())
-                p1000m.air_gap(20)
-                p1000m.aspirate(volume1, column[0].bottom(2), rate=0.33)
-                
-                p1000m.aspirate(
-                volume2, column[0].bottom(1).move(types.Point(
-                x={True: -1}.get(not index % 2, 1)*offset_x, y=0, z=0)),
-                rate=0.33)
-                
-                p1000m.dispense(volume1+volume2+20, waste[-2].top(), rate=2)
-                protocol.delay(seconds=1)
-                p1000m.blow_out()
-                p1000m.air_gap(20)
-                p1000m.drop_tip()
+    # TODO Double check the top(), bottom(2) and rate parameters
+    def remove_sup(volume1,volume2):       
+            pick_up_or_refill(p1000m)
+            
+            p1000m.move_to(column[0].top())
+            p1000m.air_gap(20)
+            p1000m.aspirate(volume1, column[0].bottom(2.5), rate=0.2)
+            p1000m.aspirate(volume2, 
+                            column[0].bottom(1.5).move(types.Point(x=offset_x, y=0, z=0)),
+                            rate=0.1)
+            protocol.delay(seconds=1)
+
+            p1000m.dispense(volume1+volume2+20, waste[-2].top(), rate=2)
+            protocol.delay(seconds=1)
+            p1000m.blow_out()
+            p1000m.air_gap(20)
+            p1000m.drop_tip()
 
     # FUNCTION 4: WASH MIXING
     def wash_mixing(volume,reps):
@@ -191,10 +190,7 @@ def run(protocol: protocol_api.ProtocolContext):
             # alternates dispense location for thorough mixing
             clearance_mixdispense = 6 if (rep % 2) else clearance_beadresuspension
             offset_x_mixdispense = 2.5 if rep % 2 else offset_x
-            loc = column[0].bottom(clearance_mixdispense).move(
-                types.Point(x={True: 1}.get(not index % 2, -1)*offset_x_mixdispense, 
-                            y=0, 
-                            z=0))
+            loc = column[0].bottom(clearance_mixdispense).move(types.Point(x=offset_x_mixdispense, y=0, z=0))
     
             # aspirate and dispense at different locations
             p1000m.aspirate(volume, column[0].bottom(1))
@@ -265,9 +261,9 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 19: Remove and discard supernatant
     protocol.comment("Step 19: Remove and discard supernatant.")
 
-    # TODO Double check the top(), bottom(2) and rate parameters
     if not skip_supremoval:
-        remove_sup(75,75)
+        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+            remove_sup(75,75)
     
     # STEP 20-25: Add wash buffer and wash twice
     protocol.comment("Step 20-25: Take off magnet, wash beads and mix 10 times. Repeat")
@@ -313,11 +309,7 @@ def run(protocol: protocol_api.ProtocolContext):
                 
                 # sets off-center location for when pipette tip is near beads
                 # TODO check if this location is correct/needed
-                loc = column[0].bottom(1).move(
-                    types.Point(x={True: -1}.get(not index % 2, 1)*offset_x, 
-                                y=0, 
-                                z=0)
-                    )
+                loc = column[0].bottom(1).move(types.Point(x=offset_x, y=0, z=0))
                 
                 p1000m.aspirate(130, column[0].bottom(4), rate=0.2)
                 p1000m.aspirate(50, loc, rate=0.2)
@@ -337,12 +329,7 @@ def run(protocol: protocol_api.ProtocolContext):
                     # loop to move closer and closer to the bottom
                     # TODO check that the clearance of 0.7-0 isn't too low??
                     for clearance in [0.7, 0.4, 0.2, 0]:
-                        loc = column[0].bottom(clearance).move(types.Point(
-                            x={True: -1}.get(not index % 2, 1)*offset_x, 
-                            y=0, 
-                            z=0)
-                        )
-                    
+                        loc = column[0].bottom(clearance).move(types.Point(x=offset_x, y=0,z=0))
                         p1000m.aspirate(25, loc)
                     p1000m.drop_tip()
             
@@ -358,14 +345,8 @@ def run(protocol: protocol_api.ProtocolContext):
             pick_up_or_refill(p1000m)
             p1000m.aspirate(50, tris.bottom(clearance_reservoir))
             
-            # calculate dispense location with alternating offset
-            loc = column[0].bottom(clearance_beadresuspension).move(types.Point(
-                x={True: 1}.get(not index % 2, -1)*offset_x, 
-                y=0, 
-                z=0)
-                )
-            
-            # dispense Tris quickly
+            # dispense Tris quickly on the side of pellet
+            loc = column[0].bottom(clearance_beadresuspension).move(types.Point(x=offset_x, y=0, z=0))            
             p1000m.dispense(50, loc, rate=3)
             
             # Mixing loop - alternating vertical clearance and horizontal offset
@@ -433,7 +414,8 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 34-35: Remove and discard supernatant, move off magnet
     protocol.comment("Step 34: Remove and discard supernatant.")
     if not skip_supremoval2:
-        remove_sup(75,75)
+        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+            remove_sup(75,75)
 
     protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
@@ -487,9 +469,9 @@ def run(protocol: protocol_api.ProtocolContext):
             pick_up_or_refill(p1000m)
             
             # loop to move closer to the bottom
+            # TODO check that 0 is not too close
             for clearance in [0.7, 0.4, 0.2, 0]:
-                loc = column[0].bottom(clearance).move(types.Point(
-                 x={True: -1}.get(not index % 2, 1)*offset_x, y=0, z=0))
+                loc = column[0].bottom(clearance).move(types.Point(x=offset_x, y=0, z=0))
                 p1000m.aspirate(25, loc)
             p1000m.drop_tip()
 
@@ -504,11 +486,7 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.aspirate(11.5, tris.bottom(clearance_reservoir))
             
             # calculate dispense location with alternating offset
-            loc = column[0].bottom(clearance_beadresuspension).move(types.Point(
-                x={True: 1}.get(not index % 2, -1)*offset_x, 
-                y=0, 
-                z=0)
-                )
+            loc = column[0].bottom(clearance_beadresuspension).move(types.Point(x=offset_x, y=0, z=0))
             
             # dispense Tris carefully
             p50m.dispense(11.5, loc)
