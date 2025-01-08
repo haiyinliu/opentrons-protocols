@@ -22,17 +22,17 @@ def run(protocol: protocol_api.ProtocolContext):
     TIPRECYCLE = True   # change to False if not a dry run (eg don't recycle tips)
 
     skip_mixbeadsandrna = False     # Toggle when testing certain blocks, same below
-    skip_thermocycler1 = False
-    skip_beadmix = False
-    skip_supremoval = False
-    skip_washes = False
-    skip_1stelution = False
-    skip_thermocycler2 = False
-    skip_rebinding = False
-    skip_supremoval2 = False
-    skip_finalwash = False
-    skip_washremoval = False
-    skip_2ndelution = False
+    skip_thermocycler1 = True
+    skip_beadmix = True
+    skip_supremoval = True
+    skip_washes = True
+    skip_1stelution = True
+    skip_thermocycler2 = True
+    skip_rebinding = True
+    skip_supremoval2 = True
+    skip_finalwash = True
+    skip_washremoval = True
+    skip_2ndelution = True
 
 
     # EXPERIMENTAL PARAMETERS
@@ -96,15 +96,39 @@ def run(protocol: protocol_api.ProtocolContext):
     [tris] = [reservoir.wells_by_name()[well] for well in ['A4']]
     waste = [reservoir.wells_by_name()[well] for well in ['A9', 'A10', 'A11', 'A12']]
 
-#      #======== DEFINING LIQUIDS ========
-#      MQ = protocol.define_liquid(name="MQ", description="MQ water", display_color="#888888")
-#      red = protocol.define_liquid(name="red", description="Red liquid", display_color="#FF0000")
-#      Liquid_trash_well = protocol.define_liquid(name="Liquid_trash_well", description="Liquid Trash", display_color="#9B9B9B")               #9B9B9B = 'Liquid Trash Grey'
-     
-#      #======== LOADING LIQUIDS ========
-#      reservoir.wells_by_name()['A1'].load_liquid(liquid=MQ, volume=5000)
-#      reservoir.wells_by_name()['A2'].load_liquid(liquid=red, volume=5000)
-#      reservoir.wells_by_name()['A12'].load_liquid(liquid=Liquid_trash_well, volume=0)
+    #======== DEFINING LIQUIDS ========   
+    sample_wells = protocol.define_liquid(name="Samples",
+                                          description="50 µL sample + 50 µL 2X binding buffer",
+                                          display_color="#C0C0C0") # Silver
+    sample_vol = 100    # 50 µL RNA sample with 50 µL 2x binding buffer added just prior
+
+    wash_buffer_wells = protocol.define_liquid(name="wash buffer", 
+                                               description="wash buffer, 180µl * sample * number of washes", 
+                                               display_color="#FF0000") # Red
+    wash_buffer_vol = 180 * NUM_SAMPLES * 3
+
+    tris_wells = protocol.define_liquid(name="Tris buffer",
+                                        description="50 µL per sample * sample count",
+                                        display_color="#FFA500") # Orange
+    tris_vol = 50 * NUM_SAMPLES
+
+    binding_buffer_wells = protocol.define_liquid(name="2X RNA binding buffer",
+                                        description="50 µL per sample * sample count",
+                                        display_color="#008000") # Green
+    binding_buffer_vol = 50 * NUM_SAMPLES
+
+    #======== LOADING LIQUIDS ========
+    for well in reservoir.columns()[0]:
+        well.load_liquid(liquid=wash_buffer_wells, volume=wash_buffer_vol)
+
+    for well in sample_plate.wells()[:NUM_SAMPLES]:
+        well.load_liquid(liquid=sample_wells, volume=sample_vol)
+
+    for well in reagent_plate.columns()[0]:
+        well.load_liquid(liquid=tris_wells, volume=tris_vol)
+
+    for well in reagent_plate.columns()[1]:
+        well.load_liquid(liquid=binding_buffer_wells, volume=binding_buffer_vol)
      
     #======== RUN SETUP ========
     # HELPER FUNCTIONS 
