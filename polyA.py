@@ -162,7 +162,7 @@ def run(protocol: protocol_api.ProtocolContext):
             # number of mixing reps
             for rep in range(reps):
                 if not rep:
-                    p1000m.aspirate(vol, column[0].bottom(clearance_bead_pellet), rate=aspirate_rate/3)
+                    p1000m.aspirate(vol, column[0].bottom(clearance_bead_pellet), rate=aspirate_rate/4)
                     p1000m.dispense(vol, column[0].bottom(clearance_beadresuspension), rate=dispense_rate)
 
                 p1000m.aspirate(vol, column[0].bottom(clearance_bead_pellet), rate=aspirate_rate)
@@ -171,7 +171,7 @@ def run(protocol: protocol_api.ProtocolContext):
                 if rep == reps - 1:
                     # side touch with blowout after last mix
                     p1000m.move_to(
-                        column[0].top(-2).move(types.Point(
+                        column[0].top(-3).move(types.Point(
                         x=column[0].diameter / 2, y=0, z=0)), speed=50) 
                     p1000m.blow_out()
                     protocol.delay(seconds=1.5)
@@ -197,30 +197,23 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # FUNCTION 5: WASH MIXING (for when beads are in a pellet)
     def wash_mixing(volume,reps):
-        ### old mixing protocol with alternate dispense location
-        # for rep in range(reps):
-                    
-            # clearance_mixdispense = 6 if (rep % 2) else clearance_beadresuspension
-            # offset_x_mixdispense = -1 if rep % 2 else offset_x
-            # loc = column[0].bottom(clearance_mixdispense).move(types.Point(x=offset_x_mixdispense, y=0, z=0))
-    
-            # # aspirate and dispense at different locations
-            # p1000m.aspirate(volume, column[0].bottom(1))
-            # p1000m.dispense(volume, loc, rate=3)
-        
-        # quick first small mixes to dislodge pellet
-        firstmixes = 4
-        loc = column[0].bottom(3).move(types.Point(x=offset_x, y=0, z=0))
-        p1000m.mix(firstmixes/2, volume/2, loc, rate=2)
-        loc = column[0].bottom(3).move(types.Point(x=-offset_x, y=0, z=0))
-        p1000m.mix(firstmixes/2, volume/2, loc, rate=2)
+        firstmixes = 8
+        locations = [
+            types.Point(x=offset_x, y=0, z=0),
+            types.Point(x=-offset_x, y=0, z=0),
+            types.Point(x=0, y=offset_x, z=0),
+            types.Point(x=0, y=-offset_x, z=0)]
+
+        for point in locations:
+            loc = column[0].bottom(3).move(point)
+            p1000m.mix(firstmixes / 2, volume / 2, loc, rate=2)
         
         # slower mixes with whole volume
         p1000m.mix(reps-firstmixes, volume, column[0].bottom(3), rate=0.5)
         slow_tip_withdrawal(p1000m, column[0], -2)
         
         # side touch with blowout after last mix
-        p1000m.move_to(column[0].top(-2).move(types.Point(x=column[0].diameter / 2, y=0, z=0)), speed=50) 
+        p1000m.move_to(column[0].top(-2).move(types.Point(x=column[0].diameter / 2, y=0, z=0)), speed=20) 
         p1000m.blow_out()
         protocol.delay(seconds=1.5)
         p1000m.move_to(column[0].top())        
@@ -322,9 +315,9 @@ def run(protocol: protocol_api.ProtocolContext):
 
             # remove supernatant
             for column in sample_plate.columns()[:NUM_COLUMNS]:
-                remove_sup(130,50,repeat)
+                remove_sup(130,50,repeat,)
                 
-            # Legacy code, unsure if needed
+            # Legacy code, unsure if fits
             # complete removal of last wash
             # if repeat:
             #     for column in sample_plate.columns()[:NUM_COLUMNS]:
@@ -387,14 +380,14 @@ def run(protocol: protocol_api.ProtocolContext):
             p1000m.dispense(50, column[0].bottom(2))
             
             # slow mixing
-            bead_mixing(10, 80, aspirate_rate=0.2, dispense_rate=0.2) # 10 mixes with 80µl
+            bead_mixing(10, 80, aspirate_rate=0.5, dispense_rate=0.5) # 10 mixes with 80µl
         
         # rebinding #1
         protocol.delay(minutes=5*DRY_RUN)
         
         # slow mixing and rebinding #2
         for column in sample_plate.columns()[:NUM_COLUMNS]:
-            bead_mixing(10, 80, aspirate_rate=0.2, dispense_rate=0.2) # 10 mixes with 80µl
+            bead_mixing(10, 80, aspirate_rate=0.5, dispense_rate=0.5) # 10 mixes with 80µl
         
         protocol.delay(minutes=5*DRY_RUN)
     
@@ -453,20 +446,14 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(seconds=1)
             p1000m.blow_out()
 
-            p1000m.drop_tip()
-        
-        # complete removal of liquid
-        for column in sample_plate.columns()[:NUM_COLUMNS]:
-
-            pick_up_or_refill(p1000m)
-            
             # loop to move closer to the bottom
             # TODO check that 0 is not too close
+            p1000m.move_to(column[0].top())
             for clearance in [0.7, 0.4, 0.2, 0]:
                 loc = column[0].bottom(clearance).move(types.Point(x=offset_x, y=0, z=0))
-                p1000m.aspirate(25, loc)
+                p1000m.aspirate(25, loc, rate= 0.2)
             p1000m.drop_tip()
-
+      
     protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
     # STEP 40: Last elution
