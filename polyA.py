@@ -20,17 +20,17 @@ def run(protocol: protocol_api.ProtocolContext):
     
     # TESTING PARAMETERS
     DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
-    TIPRECYCLE = True   # change to False if not a dry run (eg don't recycle tips)
+    BEAD_RUN = 1        # use 0.01 for testing without beads
 
     skip_mixbeadsandrna = False     # Toggle when testing certain blocks, same below
     skip_thermocycler1 = True
-    skip_beadmix = True
+    skip_beadmix = False
     skip_supremoval = False
     skip_washes = False
-    skip_1stelution = True
+    skip_1stelution = False
     skip_thermocycler2 = True
-    skip_rebinding = True
-    skip_supremoval2 = True
+    skip_rebinding = False
+    skip_supremoval2 = False
     skip_finalwash = True
     skip_washremoval = True
     skip_2ndelution = True
@@ -40,7 +40,7 @@ def run(protocol: protocol_api.ProtocolContext):
     deadvol_reservoir = 2000
     deadvol_plate = 5
     clearance_reservoir = 2
-    clearance_bead_pellet = 2
+    clearance_bead_pellet = 1.5
     clearance_beadresuspension = 3
     offset_x = 1
 
@@ -53,19 +53,16 @@ def run(protocol: protocol_api.ProtocolContext):
     
     # COLUMN 2 
     mag_block = protocol.load_module('magneticBlockV1', 'A2')
-    tiprack_50ul = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B2')
     reservoir = protocol.load_labware('nest_12_reservoir_15ml', 'C2')
     sample_plate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "D2")
      
     # COLUMN 3 
     tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A3')
     tiprack_200ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B3')
-    if TIPRECYCLE:
-        waste = protocol.load_trash_bin("C3")
-    else:
-        waste_chute = protocol.load_waste_chute()
+    tiprack_50ul = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'C3')
+    waste_chute = protocol.load_waste_chute()
      
-    # COLUMN 4 
+    # COLUMN 4 - staging area
     # empty
  
     #======== PIPETTES ========
@@ -156,13 +153,18 @@ def run(protocol: protocol_api.ProtocolContext):
         pipette.move_to(well.top(z))
         pipette.default_speed *= 10
 
-    # FUNCTION 3: BEAD MIXING
-    def bead_mixing(reps, vol, aspirate_rate=0.8, dispense_rate=2):
+    # FUNCTION 3: BEAD MIXING (for when beads are in solution)
+    def bead_mixing(reps, vol, aspirate_rate=1, dispense_rate=2):
         for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
-            pick_up_or_refill(p1000m)
+            if not p1000m.has_tip: 
+                pick_up_or_refill(p1000m)
             
             # number of mixing reps
             for rep in range(reps):
+                if not rep:
+                    p1000m.aspirate(vol, column[0].bottom(clearance_bead_pellet), rate=aspirate_rate/3)
+                    p1000m.dispense(vol, column[0].bottom(clearance_beadresuspension), rate=dispense_rate)
+
                 p1000m.aspirate(vol, column[0].bottom(clearance_bead_pellet), rate=aspirate_rate)
                 p1000m.dispense(vol, column[0].bottom(clearance_beadresuspension), rate=dispense_rate)
 
@@ -170,7 +172,7 @@ def run(protocol: protocol_api.ProtocolContext):
                     # side touch with blowout after last mix
                     p1000m.move_to(
                         column[0].top(-2).move(types.Point(
-                        x=column[0].diameter / 2, y=0, z=0))) # TODO try speed=0.5
+                        x=column[0].diameter / 2, y=0, z=0)), speed=50) 
                     p1000m.blow_out()
                     protocol.delay(seconds=1.5)
                     p1000m.move_to(column[0].top())
@@ -183,10 +185,8 @@ def run(protocol: protocol_api.ProtocolContext):
         
         p1000m.move_to(column[0].top())
         p1000m.air_gap(20)
-        p1000m.aspirate(volume1, column[0].bottom(4), rate=0.2)
-        p1000m.aspirate(volume2, 
-                        column[0].bottom(clearance_bead_pellet).move(types.Point(x=offset_x, y=0, z=0)),
-                        rate=0.05)
+        p1000m.aspirate(volume1, column[0].bottom(4), rate=0.1)        
+        p1000m.aspirate(volume2, column[0].bottom(clearance_bead_pellet), rate=0.02)
         protocol.delay(seconds=1)
 
         p1000m.dispense(volume1+volume2+20, waste[waste_loc].top(), rate=2)
@@ -195,7 +195,7 @@ def run(protocol: protocol_api.ProtocolContext):
         p1000m.air_gap(20)
         p1000m.drop_tip()
 
-    # FUNCTION 5: WASH MIXING
+    # FUNCTION 5: WASH MIXING (for when beads are in a pellet)
     def wash_mixing(volume,reps):
         ### old mixing protocol with alternate dispense location
         # for rep in range(reps):
@@ -207,11 +207,23 @@ def run(protocol: protocol_api.ProtocolContext):
             # # aspirate and dispense at different locations
             # p1000m.aspirate(volume, column[0].bottom(1))
             # p1000m.dispense(volume, loc, rate=3)
-
-        p1000m.mix(reps, volume, column[0].bottom(3), rate=0.4)
-        slow_tip_withdrawal(p1000m, column[0])
-        p1000m.blow_out(column[0].bottom(13))
-        p1000m.touch_tip(radius=0.8, v_offset=-3, speed=5)
+        
+        # quick first small mixes to dislodge pellet
+        firstmixes = 4
+        loc = column[0].bottom(3).move(types.Point(x=offset_x, y=0, z=0))
+        p1000m.mix(firstmixes/2, volume/2, loc, rate=2)
+        loc = column[0].bottom(3).move(types.Point(x=-offset_x, y=0, z=0))
+        p1000m.mix(firstmixes/2, volume/2, loc, rate=2)
+        
+        # slower mixes with whole volume
+        p1000m.mix(reps-firstmixes, volume, column[0].bottom(3), rate=0.5)
+        slow_tip_withdrawal(p1000m, column[0], -2)
+        
+        # side touch with blowout after last mix
+        p1000m.move_to(column[0].top(-2).move(types.Point(x=column[0].diameter / 2, y=0, z=0)), speed=50) 
+        p1000m.blow_out()
+        protocol.delay(seconds=1.5)
+        p1000m.move_to(column[0].top())        
         p1000m.drop_tip()
 
     
@@ -231,8 +243,8 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # STEP-BY-STEP PROTOCOL
     # Set the temperature of the cooler block and thermo cycler
-    temp_block.set_temperature(celsius=4)
-    thermocycler.set_block_temperature(temperature=20)
+    temp_block.set_temperature(celsius=23)  
+    thermocycler.set_block_temperature(temperature=23)
     
     # STEP 11: Mix beads and RNA sample 10 times
     protocol.comment("Step 11: Mixing beads/RNA sample by pipetting.")
@@ -270,7 +282,7 @@ def run(protocol: protocol_api.ProtocolContext):
     protocol.comment("Step 18: Separate bead-bound RNA from solution.")
 
     protocol.move_labware(labware=sample_plate, new_location=mag_block, use_gripper=True)
-    protocol.delay(minutes=2*DRY_RUN)
+    protocol.delay(minutes=2*BEAD_RUN)
 
     # STEP 19: Remove and discard supernatant
     protocol.comment("Step 19: Remove and discard supernatant.")
@@ -285,12 +297,12 @@ def run(protocol: protocol_api.ProtocolContext):
     if not skip_washes:
 
         # washing twice total
-        for repeat in range(2):
+        for repeat in range(1):   # TODO change back to 2 after testing
             
             # move plate off magnet for washes
             protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
-            # dispense wash buffer to all bead pellets
+            # dispense wash buffer to all bead pellets first to avoid beads drying
             pick_up_or_refill(p1000m)
             for column in sample_plate.columns()[:NUM_COLUMNS]:
                 p1000m.aspirate(180, wash_buffer[repeat].bottom(clearance_reservoir)) # ht instead of 2 if using
@@ -306,24 +318,25 @@ def run(protocol: protocol_api.ProtocolContext):
 
             # move plate to magnet for supernatant removal
             protocol.move_labware(labware=sample_plate, new_location=mag_block, use_gripper=True)
-            protocol.delay(minutes=2*DRY_RUN)
+            protocol.delay(minutes=2*BEAD_RUN)
 
             # remove supernatant
             for column in sample_plate.columns()[:NUM_COLUMNS]:
                 remove_sup(130,50,repeat)
                 
+            # Legacy code, unsure if needed
             # complete removal of last wash
-            if repeat:
-                for column in sample_plate.columns()[:NUM_COLUMNS]:
+            # if repeat:
+            #     for column in sample_plate.columns()[:NUM_COLUMNS]:
                     
-                    pick_up_or_refill(p1000m)
+            #         pick_up_or_refill(p1000m)
                     
-                    # loop to move closer and closer to the bottom
-                    # TODO check that the clearance of 0.7-0 isn't too low??
-                    for clearance in [0.7, 0.4, 0.2, 0]:
-                        loc = column[0].bottom(clearance).move(types.Point(x=offset_x, y=0,z=0))
-                        p1000m.aspirate(25, loc)
-                    p1000m.drop_tip()
+            #         # loop to move closer and closer to the bottom
+            #         # TODO check that the clearance of 0.7-0 isn't too low??
+            #         for clearance in [0.7, 0.4, 0.2, 0]:
+            #             loc = column[0].bottom(clearance).move(types.Point(x=offset_x, y=0,z=0))
+            #             p1000m.aspirate(25, loc)
+            #         p1000m.drop_tip()
             
     protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
@@ -337,11 +350,9 @@ def run(protocol: protocol_api.ProtocolContext):
             pick_up_or_refill(p1000m)
             p1000m.aspirate(50, tris.bottom(clearance_reservoir))
             
-            # dispense Tris quickly on the side of pellet
+            # dispense Tris quickly on the side of pellet and mix
             loc = column[0].bottom(clearance_beadresuspension).move(types.Point(x=offset_x, y=0, z=0))            
             p1000m.dispense(50, loc, rate=2.5)
-            
-            # Mixing loop - alternating vertical clearance and horizontal offset
             wash_mixing(volume=43,reps=15)
 
     # STEP 27: First elution in thermocycler
@@ -358,7 +369,7 @@ def run(protocol: protocol_api.ProtocolContext):
         # STEP 28: Remove tubes from thermocycler 
         protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
     
-    # STEP 29-32: Add 50 μl of RNA Binding Buffer (2X), mix and re-bind, repeat 1x
+    # STEP 29: Add 50 μl of RNA Binding Buffer (2X), mix and re-bind, repeat 1x
     
     protocol.comment("Step 29-32: Add RNA binding buffer and mix, re-bind, repeat 1x")
     
@@ -366,42 +377,32 @@ def run(protocol: protocol_api.ProtocolContext):
         source = rna_binding_buffer[0][0]
 
         for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
-            pick_up_or_refill(p1000m)
-
             # use second column of Binding buffer for sample columns >3
             if index > 2:
                 source = rna_binding_buffer[1][0]
             
+            # add 2x Binding buffer
+            pick_up_or_refill(p1000m)
             p1000m.aspirate(50, source.bottom(1))
             p1000m.dispense(50, column[0].bottom(2))
-
-            # mixing
-            for rep in range(10):
-                p1000m.aspirate(80, column[0].bottom(2))
-                p1000m.dispense(80, column[0].bottom(2))
-                
-                # last mixing rep - slow tip withdrawal, move slightly offcenter at top of well (top(-2)
-                # blow_out() to ensure no remaining droplets in tip
-                if rep == 9:
-                    protocol.delay(seconds=1)
-                    p1000m.move_to(well.top(),speed = 5)
-
-                    p1000m.move_to(
-                     column[0].top(-2).move(types.Point(
-                      x=column[0].diameter / 2, y=0, z=0)))
-                    p1000m.blow_out()
-                    p1000m.move_to(column[0].top())
-            p1000m.drop_tip()
-
+            
+            # slow mixing
+            bead_mixing(10, 80, aspirate_rate=0.2, dispense_rate=0.2) # 10 mixes with 80µl
+        
+        # rebinding #1
         protocol.delay(minutes=5*DRY_RUN)
-        bead_mixing(10, 80, aspirate_rate=0.2, dispense_rate=0.2) # 10 mixes with 80µl
+        
+        # slow mixing and rebinding #2
+        for column in sample_plate.columns()[:NUM_COLUMNS]:
+            bead_mixing(10, 80, aspirate_rate=0.2, dispense_rate=0.2) # 10 mixes with 80µl
+        
         protocol.delay(minutes=5*DRY_RUN)
     
     # STEP 33: move plate to magnet for 2 min to separate the poly(A) RNA
     protocol.comment("Step 33: Second binding - separate RNA from solution.")
     
     protocol.move_labware(labware=sample_plate, new_location=mag_block, use_gripper=True)
-    protocol.delay(minutes=2*DRY_RUN)
+    protocol.delay(minutes=2*BEAD_RUN)
 
     # STEP 34-35: Remove and discard supernatant, move off magnet
     protocol.comment("Step 34: Remove and discard supernatant.")
@@ -431,7 +432,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 37: Place tubes on magnetic rack
     protocol.comment("STEP 37: Place the tubes on the magnetic rack for 2 minutes")
     protocol.move_labware(labware=sample_plate, new_location=mag_block, use_gripper=True)
-    protocol.delay(minutes=2*DRY_RUN)
+    protocol.delay(minutes=2*BEAD_RUN)
 
     # STEP 38-39: Remove wash buffer completely and move plate off magnet
     protocol.comment("STEP 38-39: Remove and discard wash buffer, remove from magnet")
