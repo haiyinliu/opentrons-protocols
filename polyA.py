@@ -22,17 +22,17 @@ def run(protocol: protocol_api.ProtocolContext):
     DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
     BEAD_RUN = 1        # use 0.01 for testing without beads
 
-    skip_mixbeadsandrna = False     # Toggle when testing certain blocks, same below
+    skip_mixbeadsandrna = True     # Toggle when testing certain blocks, same below
     skip_thermocycler1 = True
-    skip_beadmix = False
-    skip_supremoval = False
-    skip_washes = False
-    skip_1stelution = False
+    skip_beadmix = True
+    skip_supremoval = True
+    skip_washes = True
+    skip_1stelution = True
     skip_thermocycler2 = True
-    skip_rebinding = False
-    skip_supremoval2 = False
-    skip_finalwash = True
-    skip_washremoval = True
+    skip_rebinding = True
+    skip_supremoval2 = True
+    skip_finalwash = False
+    skip_washremoval = False
     skip_2ndelution = True
 
 
@@ -152,8 +152,15 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(seconds=delay_seconds)
         pipette.move_to(well.top(z))
         pipette.default_speed *= 10
+    
+    # FUNCTION 3: SIDE TOUCH WITH BLOWOUT
+    def side_touch_w_blowout(pipette,well,pos=-1):
+            pipette.move_to(well.top(pos).move(types.Point(x=well.diameter / 2, y=0, z=0)), speed=10) 
+            pipette.blow_out()
+            protocol.delay(seconds=1.5)
+            pipette.move_to(well.top(), speed=30)
 
-    # FUNCTION 3: BEAD MIXING (for when beads are in solution)
+    # FUNCTION 4: BEAD MIXING (for when beads are in solution)
     def bead_mixing(reps, vol, aspirate_rate=1, dispense_rate=2):
         for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
             if not p1000m.has_tip: 
@@ -170,17 +177,12 @@ def run(protocol: protocol_api.ProtocolContext):
 
                 if rep == reps - 1:
                     # side touch with blowout after last mix
-                    p1000m.move_to(
-                        column[0].top(-3).move(types.Point(
-                        x=column[0].diameter / 2, y=0, z=0)), speed=50) 
-                    p1000m.blow_out()
-                    protocol.delay(seconds=1.5)
-                    p1000m.move_to(column[0].top())
+                    side_touch_w_blowout(p1000m, column[0], pos=-3)
             p1000m.drop_tip()
 
-    # FUNCTION 4: REMOVE SUPERNATANT
+    # FUNCTION 5: REMOVE SUPERNATANT
     # TODO Double check the top(), bottom(2) and rate parameters
-    def remove_sup(volume1,volume2,waste_loc):       
+    def remove_sup(volume1,volume2,waste_well):       
         pick_up_or_refill(p1000m)
         
         p1000m.move_to(column[0].top())
@@ -189,13 +191,13 @@ def run(protocol: protocol_api.ProtocolContext):
         p1000m.aspirate(volume2, column[0].bottom(clearance_bead_pellet), rate=0.02)
         protocol.delay(seconds=1)
 
-        p1000m.dispense(volume1+volume2+20, waste[waste_loc].top(), rate=2)
+        p1000m.dispense(volume1+volume2+20, waste[waste_well].top(), rate=2)
         protocol.delay(seconds=1)
         p1000m.blow_out()
         p1000m.air_gap(20)
         p1000m.drop_tip()
 
-    # FUNCTION 5: WASH MIXING (for when beads are in a pellet)
+    # FUNCTION 6: WASH MIXING (for when beads are in a pellet)
     def wash_mixing(volume,reps):
         firstmixes = 8
         locations = [
@@ -206,17 +208,14 @@ def run(protocol: protocol_api.ProtocolContext):
 
         for point in locations:
             loc = column[0].bottom(3).move(point)
-            p1000m.mix(firstmixes / 2, volume / 2, loc, rate=2)
+            p1000m.mix(firstmixes / 4, volume / 2, loc, rate=2)
         
         # slower mixes with whole volume
         p1000m.mix(reps-firstmixes, volume, column[0].bottom(3), rate=0.5)
         slow_tip_withdrawal(p1000m, column[0], -2)
         
         # side touch with blowout after last mix
-        p1000m.move_to(column[0].top(-2).move(types.Point(x=column[0].diameter / 2, y=0, z=0)), speed=20) 
-        p1000m.blow_out()
-        protocol.delay(seconds=1.5)
-        p1000m.move_to(column[0].top())        
+        side_touch_w_blowout(p1000m,column[0],pos=-1)       
         p1000m.drop_tip()
 
     
@@ -236,8 +235,8 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # STEP-BY-STEP PROTOCOL
     # Set the temperature of the cooler block and thermo cycler
-    temp_block.set_temperature(celsius=23)  
-    thermocycler.set_block_temperature(temperature=23)
+    temp_block.set_temperature(celsius=21)  
+    thermocycler.set_block_temperature(temperature=21)
     
     # STEP 11: Mix beads and RNA sample 10 times
     protocol.comment("Step 11: Mixing beads/RNA sample by pipetting.")
@@ -282,7 +281,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     if not skip_supremoval:
         for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
-            remove_sup(75,75,waste_loc=-2)
+            remove_sup(75,75,waste_well=-1)
     
     # STEP 20-25: Add wash buffer and wash twice
     protocol.comment("Step 20-25: Take off magnet, wash beads and mix 10 times. Repeat")
@@ -401,7 +400,7 @@ def run(protocol: protocol_api.ProtocolContext):
     protocol.comment("Step 34: Remove and discard supernatant.")
     if not skip_supremoval2:
         for column in sample_plate.columns()[:NUM_COLUMNS]:
-            remove_sup(75,75,waste_loc=-2)
+            remove_sup(75,75,waste_well=-1)
 
     protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
@@ -452,6 +451,8 @@ def run(protocol: protocol_api.ProtocolContext):
             for clearance in [0.7, 0.4, 0.2, 0]:
                 loc = column[0].bottom(clearance).move(types.Point(x=offset_x, y=0, z=0))
                 p1000m.aspirate(25, loc, rate= 0.2)
+            p1000m.air_gap(20)
+            p1000m.dispense(45, waste[-1].top(), rate=2)
             p1000m.drop_tip()
       
     protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
@@ -472,11 +473,7 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(seconds=1)
             
             p50m.move_to(well.top(),speed = 5)
-            p50m.move_to(
-             column[0].top(-2).move(types.Point(
-              x=column[0].diameter / 2, y=0, z=0)))
-            p50m.blow_out()
-            p50m.move_to(column[0].top())
+            side_touch_w_blowout(p50m,column[0],-5)
             p50m.drop_tip()
 
 
