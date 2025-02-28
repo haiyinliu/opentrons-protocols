@@ -326,7 +326,16 @@ def run(protocol: protocol_api.ProtocolContext):
 
             # dispense wash buffer to all bead pellets first to avoid beads drying
             pick_up_or_refill(p1000m)
-            for column in sample_plate.columns()[:NUM_COLUMNS]:
+            source = wash_buffer[0]
+
+            for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+                if index < 2:
+                    source = wash_buffer[0]
+                elif index < 4:
+                    source = wash_buffer[1]
+                elif index < 6:
+                    source = wash_buffer[2]
+
                 p1000m.aspirate(180, wash_buffer[0].bottom(clearance_reservoir)) # ht instead of 2 if using
                 p1000m.dispense(180, column[0].top(), rate = 0.8)
                 # protocol.delay(seconds=1)
