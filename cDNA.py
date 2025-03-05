@@ -18,8 +18,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # SAMPLE PARAMETERS
     NUM_SAMPLES = 8  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
-    
-    ELUTION_VOL = 15    # µl of NFW to resuspend the beads in at the last elution
+    ELUTION_VOL = 21    # µl of NFW to resuspend the beads in at the last elution
 
     # TESTING PARAMETERS
     DRY_RUN = 1      # use 0.01 to shorten wait times if it is dry run, otherwise 1
@@ -47,38 +46,56 @@ def run(protocol: protocol_api.ProtocolContext):
     offset_x = 1
 
     #======== DECK SETUP ========
-    # COLUMN 1 
+    ## COLUMN 1 
     thermocycler = protocol.load_module('thermocycler module gen2')
+    
+    # Load the polyA plate on the heater shaker module (just as a holding location)
+    heatershaker = protocol.load_module('heaterShakerModuleV1','C1')
+    hs_adapter = heatershaker.load_adapter('opentrons_96_pcr_adapter')
+    heatershaker.open_labware_latch()
+    plate1_polyA = hs_adapter.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt")
+    protocol.pause("Place polyA plate on the Heater-Shaker Module and resume.")
+    heatershaker.close_labware_latch()
+
     temp_block = protocol.load_module('temperature module gen2', 'D1')  
     temp_adapter = temp_block.load_adapter('opentrons_96_well_aluminum_block')     
     cold_plate = temp_adapter.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt")
-    
-    # COLUMN 2 
+
+    ## COLUMN 2 
     mag_block = protocol.load_module('magneticBlockV1', 'A2')
-    plate1_polyA = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "B2")
+    plate3_eluate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "B2")
     reservoir = protocol.load_labware('nest_12_reservoir_15ml', 'C2')
     plate2_sample = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "D2")
     
-    # COLUMN 3 
-    tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A3')
-    tiprack_50ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B3')
-    tiprack_50ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'C3')
+    ## COLUMN 3 
+    tiprack_50ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'A3')
+    tiprack_50ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B3')
+    tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C3')
     waste_chute = protocol.load_waste_chute()
     
-    # COLUMN 4 - staging area
-    # TODO lets add tip racks here
-    plate3_eluate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "A4")
-    # protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B4')
+    ## COLUMN 4 - staging area
+    tiprack_50ul_3 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'A4')
+    tiprack_50ul_4 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B4')
+    tiprack_200ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C4')
+    # D4 is an empty slot to move tip boxes to
  
     #======== PIPETTES ========
-    p1000m = protocol.load_instrument('flex_8channel_1000', 'left', tip_racks=[tiprack_200ul_1])
-    p50m = protocol.load_instrument('flex_8channel_50', 'right', tip_racks=[tiprack_50ul_1,tiprack_50ul_2])
-     
+    # load active tips for each pipette
+    p50m = protocol.load_instrument('flex_8channel_50', 'right')
+    p1000m = protocol.load_instrument('flex_8channel_1000', 'left')
+    
+    # define "active" and "staging" tip boxes for each pipette
+    p50m.tip_racks = [tiprack_50ul_1, tiprack_50ul_2]
+    p50_staging = [tiprack_50ul_3, tiprack_50ul_4]
+    
+    p1000m.tip_racks = [tiprack_200ul_1]
+    p1000_staging = [tiprack_200ul_2]
+
     #======== REAGENT WELLS ========
     # define well locations for where samples are moved from/to 
     polyA_wells = plate1_polyA.columns()[6 : 6 + NUM_COLUMNS]  # oligo dT-bead eluates from polyA protocol, old plate columns 7-12)
-    fstrand_wells = plate2_sample.columns()[:NUM_COLUMNS]  # wells for the first strand synthesis
-    sstrand_wells = plate2_sample.columns()[6 : 6 + NUM_COLUMNS] # wells for the second strand synthesis
+    firststrand_wells = plate2_sample.columns()[:NUM_COLUMNS]  # wells for the first strand synthesis
+    secondstrand_wells = plate2_sample.columns()[6 : 6 + NUM_COLUMNS] # wells for the second strand synthesis
     eluate_wells = plate3_eluate.columns()[:NUM_COLUMNS]  # wells for the final eluate
 
     # cold plate (for reagents and the eluate for this protocol)
@@ -245,7 +262,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # FUNCTION 4: BEAD MIXING (for when beads are in solution)
     def bead_mixing(pipette, reps, vol, speed=0.5):
-        for index, column in enumerate(fstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(firststrand_wells[:NUM_COLUMNS]):
             if not pipette.has_tip: 
                 pick_up_or_refill(pipette)
             
@@ -302,7 +319,7 @@ def run(protocol: protocol_api.ProtocolContext):
         p50m.distribute(
             volume=3.5,
             source=MM1[0].bottom(1),
-            dest=[col[0].bottom(1) for col in fstrand_wells[:NUM_COLUMNS]],
+            dest=[col[0].bottom(1) for col in firststrand_wells[:NUM_COLUMNS]],
             new_tip='once',
             aspirate_rate=0.5,
             dispense_rate=1,
@@ -314,7 +331,7 @@ def run(protocol: protocol_api.ProtocolContext):
         p50m.transfer(
             volume=7.5,
             source=[col[0].bottom(1) for col in polyA_wells],
-            dest=[col[0].bottom(1) for col in fstrand_wells[:NUM_COLUMNS]],
+            dest=[col[0].bottom(1) for col in firststrand_wells[:NUM_COLUMNS]],
             new_tip='always',
             aspirate_rate=0.5,
             dispense_rate=1,
@@ -341,7 +358,7 @@ def run(protocol: protocol_api.ProtocolContext):
         p50m.transfer(
             volume=9,
             source=MM2[0].bottom(1),
-            dest=[col[0].bottom(1) for col in fstrand_wells[:NUM_COLUMNS]],
+            dest=[col[0].bottom(1) for col in firststrand_wells[:NUM_COLUMNS]],
             new_tip='always',
             aspirate_rate=0.5,
             dispense_rate=1,
@@ -370,7 +387,7 @@ def run(protocol: protocol_api.ProtocolContext):
         p50m.transfer(
             volume=1,
             source=rnase[0].bottom(1),
-            dest=[col[0].bottom(1) for col in fstrand_wells[:NUM_COLUMNS]],
+            dest=[col[0].bottom(1) for col in firststrand_wells[:NUM_COLUMNS]],
             new_tip='always',
             aspirate_rate=0.5,
             dispense_rate=1,
@@ -432,7 +449,7 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.transfer(
                 17,
                 bead_source[0].bottom(2),
-                fstrand_wells[col_idx][0].bottom(2),
+                firststrand_wells[col_idx][0].bottom(2),
                 new_tip='never',
                 mix_after=(5, 15),
                 aspirate_rate=0.5,
@@ -440,7 +457,7 @@ def run(protocol: protocol_api.ProtocolContext):
             )
             
             # Slow tip withdrawal and drop
-            slow_tip_withdrawal(p50m, fstrand_wells[col_idx][0], -2)
+            slow_tip_withdrawal(p50m, firststrand_wells[col_idx][0], -2)
             p50m.drop_tip()
         
         # incubate 5 min with slow mixing (Hula mixer replacement)  
@@ -454,14 +471,14 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=2*BEAD_RUN)
       
         #Remove and discard supernatant
-        for index, column in enumerate(fstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(firststrand_wells[:NUM_COLUMNS]):
             remove_sup(p50m, 20, 5, waste_well=-1)
             p50m.drop_tip()
     
         # two repeats in total
         for repeat in range(2):
             # move plate off magnet for washes
-            for index, column in enumerate(fstrand_wells[:NUM_COLUMNS]):
+            for index, column in enumerate(firststrand_wells[:NUM_COLUMNS]):
                 if index < 2:
                     source = ethanol[0]
                 elif index < 4:
@@ -480,7 +497,7 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(minutes=1*BEAD_RUN)
 
             # remove supernatant completely
-            for column in fstrand_wells[:NUM_COLUMNS]:
+            for column in firststrand_wells[:NUM_COLUMNS]:
                 remove_sup(p1000m,130,50,waste_well=repeat)
                 
                 if repeat == 1: 
@@ -496,7 +513,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.move_labware(labware=plate2_sample, new_location="D2", use_gripper=True)
 
     if not skip_elution:
-        for index, column in enumerate(fstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(firststrand_wells[:NUM_COLUMNS]):
             pick_up_or_refill(p50m)
             p50m.aspirate(20, NFW.bottom(clearance_reservoir))
             
@@ -517,13 +534,13 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=4*DRY_RUN)
 
         # transfer eluate to fresh wells
-        for index, column in enumerate(fstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(firststrand_wells[:NUM_COLUMNS]):
             pick_up_or_refill(p50m)
             p50m.move_to(column[0].top())
             p50m.air_gap(10)
             p50m.aspirate(20, column[0].bottom(4), rate=0.1)        
             protocol.delay(seconds=1)
-            p50m.dispense(30, sstrand_wells[index][0].bottom(1), rate=0.5)
+            p50m.dispense(30, secondstrand_wells[index][0].bottom(1), rate=0.5)
             p50m.drop_tip()
 
     if not skip_2ndstrand:
@@ -531,7 +548,7 @@ def run(protocol: protocol_api.ProtocolContext):
         p50m.transfer(
             volume=30,
             source=MM3[0].bottom(1),
-            dest=[col[0].bottom(1) for col in sstrand_wells[:NUM_COLUMNS]],
+            dest=[col[0].bottom(1) for col in secondstrand_wells[:NUM_COLUMNS]],
             new_tip='always',
             aspirate_rate=0.5,
             dispense_rate=1,
@@ -593,7 +610,7 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.transfer(
                 40,
                 bead_source[0].bottom(2),
-                sstrand_wells[col_idx][0].bottom(2),
+                secondstrand_wells[col_idx][0].bottom(2),
                 new_tip='never',
                 mix_after=(5, 50),
                 aspirate_rate=0.5,
@@ -601,7 +618,7 @@ def run(protocol: protocol_api.ProtocolContext):
             )
             
             # Slow tip withdrawal and drop
-            slow_tip_withdrawal(p50m, sstrand_wells[col_idx][0], -2)
+            slow_tip_withdrawal(p50m, secondstrand_wells[col_idx][0], -2)
             p50m.drop_tip()
         
         # incubate 5 min with slow mixing (Hula mixer replacement)  
@@ -615,14 +632,14 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=2*BEAD_RUN)
       
         #Remove and discard supernatant
-        for index, column in enumerate(sstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(secondstrand_wells[:NUM_COLUMNS]):
             remove_sup(p50m, 20, 5, waste_well=-1)
             p50m.drop_tip()
     
         # two repeats in total
         for repeat in range(2):
             # move plate off magnet for washes
-            for index, column in enumerate(sstrand_wells[:NUM_COLUMNS]):
+            for index, column in enumerate(secondstrand_wells[:NUM_COLUMNS]):
                 if index < 2:
                     source = ethanol[0]
                 elif index < 4:
@@ -641,7 +658,7 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(minutes=1*BEAD_RUN)
 
             # remove supernatant completely
-            for column in sstrand_wells[:NUM_COLUMNS]:
+            for column in secondstrand_wells[:NUM_COLUMNS]:
                 remove_sup(p1000m,130,50,waste_well=repeat)
                 
                 if repeat == 1: 
@@ -657,18 +674,19 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.move_labware(labware=plate2_sample, new_location="D2", use_gripper=True)
 
     if not skip_finalelution:
+        # TODO remove this section once tiprack exchange logic is finished or obsolete
         # move polyA plate to staging area and move eluate plate to deck
-        protocol.move_labware(labware=plate1_polyA, new_location="B4", use_gripper=True)
-        protocol.move_labware(labware=plate3_eluate, new_location="B2", use_gripper=True)
+        # protocol.move_labware(labware=plate1_polyA, new_location="B4", use_gripper=True)
+        # protocol.move_labware(labware=plate3_eluate, new_location="B2", use_gripper=True)
 
         # elute cDNA from beads
-        for index, column in enumerate(sstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(secondstrand_wells[:NUM_COLUMNS]):
             pick_up_or_refill(p50m)
-            p50m.aspirate(21, NFW.bottom(clearance_reservoir))
+            p50m.aspirate(ELUTION_VOL, NFW.bottom(clearance_reservoir))
             
             # dispense quickly on the side of pellet and mix
             loc = column[0].bottom(clearance_beadresuspension).move(types.Point(x=offset_x, y=0, z=0))            
-            p50m.dispense(21, loc, rate=2.5)
+            p50m.dispense(ELUTION_VOL, loc, rate=2.5)
             wash_mixing(p50m, volume=16,reps=8)
 
             # side touch with blowout after last mix
@@ -683,7 +701,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=4*DRY_RUN)
 
         # transfer eluate to fresh wells
-        for index, column in enumerate(fstrand_wells[:NUM_COLUMNS]):
+        for index, column in enumerate(firststrand_wells[:NUM_COLUMNS]):
             pick_up_or_refill(p50m)
             p50m.move_to(column[0].top())
             p50m.air_gap(10)
