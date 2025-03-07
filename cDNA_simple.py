@@ -33,9 +33,9 @@ def run(protocol: protocol_api.ProtocolContext):
     skip_wash1 = True
     skip_elution = True
     skip_2ndstrand = True
-    skip_bead40 = False
+    skip_bead40 = True
     skip_wash2 = False
-    skip_finalelution = True
+    skip_finalelution = False
 
     # VOLUME AND DISTANCE SETTINGS
     deadvol_reservoir = 1500
@@ -102,16 +102,16 @@ def run(protocol: protocol_api.ProtocolContext):
             num = NUM_COLUMNS if NUM_COLUMNS <= 3 else 3    # only 1 column for up to 3 samples
         else:
             num = NUM_COLUMNS - 3 if NUM_COLUMNS > 3 else 0 # 2 columns for more than 3 samples
-        # sets volume needed in each column
-        # note: I don't know where this is used if at all
-        if num:
-            column[0].liq_vol = 50*num + deadvol_plate
-        else:
-            column[0].liq_vol = 0
+        # # sets volume needed in each column
+        # # note: I don't know where this is used if at all
+        # if num:
+        #     column[0].liq_vol = 50*num + deadvol_plate
+        # else:
+        #     column[0].liq_vol = 0
 
     # reagent reservoir
     ethanol = [reservoir.wells_by_name()[well] for well in ['A1', 'A2', 'A3']]
-    for well in ethanol: well.liq_vol = 4*200*2*p1000m.channels + deadvol_reservoir
+    # for well in ethanol: well.liq_vol = 4*200*2*p1000m.channels + deadvol_reservoir
     NFW = reservoir['A5']
 
     # waste 
@@ -205,7 +205,7 @@ def run(protocol: protocol_api.ProtocolContext):
                 pick_up_or_refill(pipette)
             
             # slow mixes
-            pipette.mix(reps, vol, column[0].bottom(3), rate=speed)
+            pipette.mix(reps, vol, column[0].bottom(2), rate=speed)
             slow_tip_withdrawal(pipette, column[0], -2)
             
             # side touch with blowout after last mix
@@ -227,7 +227,7 @@ def run(protocol: protocol_api.ProtocolContext):
             pipette.mix(3, volume / 2, loc, rate=2)
         
         # slower mixes with whole volume
-        pipette.mix(reps, volume, column[0].bottom(3), rate=0.5)
+        pipette.mix(reps, volume, column[0].bottom(2), rate=0.5)
         slow_tip_withdrawal(pipette, column[0], -2)
         
     # FUNCTION 5: REMOVE SUPERNATANT
@@ -291,15 +291,15 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.drop_tip()
     
     # FUNCTION 7: ETHANOL RINSE (washing on the magnet block)
-    def ethanol_rinse(sup_vol, plate, wells, waste):
+    def ethanol_rinse(sup_pip, sup_vol, plate, wells, waste):
         # move plate to magnet for 2 min
         protocol.move_labware(labware=plate, new_location=mag_block, use_gripper=True)
         protocol.delay(minutes=2*BEAD_RUN)
     
         #Remove and discard supernatant
         for index, column in enumerate(wells):
-            remove_sup(p50m, column, sup_vol-5, 5, waste_well=-1)
-            p50m.drop_tip()
+            remove_sup(sup_pip, column, sup_vol-5, 5, waste_well=-1)
+            sup_pip.drop_tip()
 
         # two repeats in total
         for repeat in range(2):
@@ -314,7 +314,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
                 pick_up_or_refill(p1000m)
                 p1000m.aspirate(180, ethanol[0].bottom(clearance_reservoir))
-                p1000m.dispense(180, column[0].bottom(5), rate = 0.2)
+                p1000m.dispense(180, column[0].bottom(5), rate = 0.1)
                 p1000m.air_gap(20)  # prevent ethanol from dripping
                 p1000m.drop_tip()
 
@@ -332,6 +332,7 @@ def run(protocol: protocol_api.ProtocolContext):
                     p1000m.aspirate(25, loc, rate= 0.2)
                 p1000m.air_gap(20)
                 p1000m.dispense(45, waste[1].top())
+                p1000m.blow_out()
                 p1000m.drop_tip()
 
         protocol.delay(seconds=30*BEAD_RUN)
@@ -441,7 +442,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=2.5*DRY_RUN)
 
     if not skip_wash1: 
-        ethanol_rinse(sup_vol=30, plate=plate2_sample, wells=firststrand_wells, waste=waste)
+        ethanol_rinse(sup_pip=p50m, sup_vol=30, plate=plate2_sample, wells=firststrand_wells, waste=waste)
 
     if not skip_elution:
         for index, column in enumerate(firststrand_wells):
@@ -516,7 +517,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=2.5*DRY_RUN)
 
     if not skip_wash2: 
-        ethanol_rinse(sup_vol=30, plate=plate2_sample, wells=secondstrand_wells, waste=waste)
+        ethanol_rinse(sup_pip=p1000m, sup_vol=90, plate=plate2_sample, wells=secondstrand_wells, waste=waste)
     # TODO change back to 80 after figuring out the volume tracking error
 
     if not skip_finalelution:
@@ -540,13 +541,16 @@ def run(protocol: protocol_api.ProtocolContext):
         
         # incubate 10 min total with slow mixing (Hula mixer replacement)  
         protocol.delay(minutes=3*DRY_RUN)
-        slow_mixing(p50m, 5, 17, speed=0.3)
+        slow_mixing(p50m, secondstrand_wells, reps=5, vol=17, speed=0.3)
         protocol.delay(minutes=3*DRY_RUN)
-        slow_mixing(p50m, 5, 17, speed=0.3)
+        slow_mixing(p50m, secondstrand_wells, reps=5, vol=17, speed=0.3)
         protocol.delay(minutes=4*DRY_RUN)
 
+        protocol.move_labware(labware=plate, new_location=mag_block, use_gripper=True)
+        protocol.delay(minutes=2*BEAD_RUN)
+
         # transfer eluate to fresh wells
-        for index, column in enumerate(firststrand_wells):
+        for index, column in enumerate(secondstrand_wells):
             pick_up_or_refill(p50m)
             p50m.move_to(column[0].top())
             p50m.air_gap(10)
