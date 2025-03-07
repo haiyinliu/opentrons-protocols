@@ -24,16 +24,16 @@ def run(protocol: protocol_api.ProtocolContext):
     DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
     BEAD_RUN = 0.01        # use 0.01 for testing without beads, otherwise 1 
 
-    skip_firststrand = True     # Toggle when testing certain blocks, same below
+    skip_firststrand = False     # Toggle when testing certain blocks, same below
     skip_65_5min = True
-    skip_strandswitch = True
+    skip_strandswitch = False
     skip_42_90min = True
-    skip_rnase = True
-    skip_bead17 = True
-    skip_wash1 = True
-    skip_elution = True
-    skip_2ndstrand = True
-    skip_bead40 = True
+    skip_rnase = False
+    skip_bead17 = False
+    skip_wash1 = False
+    skip_elution = False
+    skip_2ndstrand = False
+    skip_bead40 = False
     skip_wash2 = False
     skip_finalelution = False
 
@@ -546,7 +546,7 @@ def run(protocol: protocol_api.ProtocolContext):
         slow_mixing(p50m, secondstrand_wells, reps=5, vol=17, speed=0.3)
         protocol.delay(minutes=4*DRY_RUN)
 
-        protocol.move_labware(labware=plate, new_location=mag_block, use_gripper=True)
+        protocol.move_labware(labware=plate2_sample, new_location=mag_block, use_gripper=True)
         protocol.delay(minutes=2*BEAD_RUN)
 
         # transfer eluate to fresh wells
