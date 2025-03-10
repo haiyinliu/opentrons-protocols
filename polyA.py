@@ -176,9 +176,9 @@ def run(protocol: protocol_api.ProtocolContext):
         try:
             pipette.pick_up_tip()
         except OutOfTipsError:
-            pause_attention(
+            protocol.pause(
              """Please Refill the {} Tip Boxes
-                and Empty the Tip Waste.""".format(current_pipette))
+                and Empty the Tip Waste.""".format(pipette.mount))
             pipette.reset_tipracks()
             pipette.pick_up_tip()
 
