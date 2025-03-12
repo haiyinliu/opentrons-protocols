@@ -16,7 +16,7 @@ requirements = {
 def run(protocol: protocol_api.ProtocolContext):
     #======== PARAMETERS ========
     # SAMPLE PARAMETERS
-    NUM_SAMPLES = 4  # Define the number of samples (up to 48)
+    NUM_SAMPLES = 16  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
     
     ELUTION_VOL = 15    # µl of Tris to resuspend the beads in at the last elution
@@ -73,16 +73,14 @@ def run(protocol: protocol_api.ProtocolContext):
     p1000m = protocol.load_instrument('flex_8channel_1000', 'left', tip_racks=[tiprack_200ul_1,tiprack_200ul_2])
     p50m = protocol.load_instrument('flex_8channel_50', 'right', tip_racks=[tiprack_50ul])
      
-    #======== REAGENTS ========
+    #======== REAGENT WELLS ========
+    # sample plate 
+    sample_wells = sample_plate.columns()[:NUM_COLUMNS]
+    
     # cold plate (for reagents and the eluate)
-    rna_binding_buffer = [
-        cold_plate.columns_by_name()[name] for name in ['1', '2']]
-    
-    tris = [
-        cold_plate.columns_by_name()[name] for name in ['4', '5']]
-    
-    eluate = [
-        cold_plate.columns_by_name()[name] for name in ['7', '8', '9', '10', '11', '12']]
+    rna_binding_buffer = cold_plate.columns()[: (1 if NUM_COLUMNS <= 3 else 2)] # column #1 (+ #2 for more than 3 samples)
+    tris = cold_plate.columns()[3 : (4 if NUM_COLUMNS <= 3 else 5)]             # column #4 (+ #5 for more than 3 samples)
+    finaleluate_wells = cold_plate.columns()[6 : 6 + NUM_COLUMNS]               # columns #6-12 for eluate
 
     # binding buffer (2X 50 uL per sample)
     for index, column in enumerate(rna_binding_buffer):
@@ -90,69 +88,59 @@ def run(protocol: protocol_api.ProtocolContext):
             num = NUM_COLUMNS if NUM_COLUMNS <= 3 else 3    # only 1 column for up to 3 samples
         else:
             num = NUM_COLUMNS - 3 if NUM_COLUMNS > 3 else 0 # 2 columns for more than 3 samples
-        # sets volume needed in each column
-        # note: I don't know where this is used if at all
-        if num:
-            column[0].liq_vol = 50*num + deadvol_plate
-        else:
-            column[0].liq_vol = 0
 
     # reagent reservoir
     ### TODO check if volume correct - wash buffer 180 uL per sample - for three washes
     wash_buffer = [reservoir.wells_by_name()[well] for well in ['A1','A2','A3']]
-    for well in wash_buffer:
-        well.liq_vol = 180*NUM_COLUMNS*p1000m.channels + deadvol_reservoir
-    
-    # [tris] = [reservoir.wells_by_name()[well] for well in ['A5']]
-    
+      
     waste = [reservoir.wells_by_name()[well] for well in ['A10', 'A11', 'A12']]
 
     #======== DEFINING LIQUIDS ========   
-    sample_wells = protocol.define_liquid(name="Samples",
+    sample_liquid = protocol.define_liquid(name="Samples",
                                           description="50 µL sample + 50 µL 2X binding buffer",
                                           display_color="#C0C0C0") # Silver
     sample_vol = 100    # 50 µL RNA sample with 50 µL 2x binding buffer added just prior
 
-    wash_buffer_wells = protocol.define_liquid(name="wash buffer", 
+    wash_buffer_liquid = protocol.define_liquid(name="wash buffer", 
                                                description="wash buffer, 180µl * sample * number of washes", 
                                                display_color="#0000FF") # Blue
-    wash_buffer_vol = 180 * NUM_SAMPLES * 3 + 1500 # dead volume
+    wash_buffer_vol = 180 * NUM_SAMPLES * 3 + deadvol_reservoir
 
-    tris_wells = protocol.define_liquid(name="Tris buffer",
+    tris_liquid = protocol.define_liquid(name="Tris buffer",
                                         description="50 µL per sample * sample count",
                                         display_color="#FFA500") # Orange
-    tris_vol = 50 * NUM_SAMPLES
+    tris_vol = 50 * NUM_COLUMNS/2 + deadvol_plate
 
-    binding_buffer_wells = protocol.define_liquid(name="2X RNA binding buffer",
+    binding_buffer_liquid = protocol.define_liquid(name="2X RNA binding buffer",
                                         description="50 µL per sample * sample count",
                                         display_color="#008000") # Green
-    binding_buffer_vol = 65 * NUM_SAMPLES
+    binding_buffer_vol = 65 * NUM_COLUMNS/2 + deadvol_plate
 
     eluate_liquid = protocol.define_liquid(name="Eluate",
                                            description="Eluted RNA after cleanup",
                                            display_color="#0000FF") # Blue
-    eluate_vol = 15 * NUM_SAMPLES  # Adjust the multiplier as needed
+    eluate_vol = 15
 
     #======== LOADING LIQUIDS ========
     # sample plate
     for well in sample_plate.wells()[:NUM_SAMPLES]:
-        well.load_liquid(liquid=sample_wells, volume=sample_vol)
+        well.load_liquid(liquid=sample_liquid, volume=sample_vol)
 
     # reservoir
     for column in reservoir.columns()[0:2]:
         for well in column: 
-            well.load_liquid(liquid=wash_buffer_wells, volume=wash_buffer_vol)
+            well.load_liquid(liquid=wash_buffer_liquid, volume=wash_buffer_vol)
 
     # cold plate
     # dictionary for mapping liquids on the plate 
     liquid_mapping = {
         # Binding buffer goes in columns "1" and "2"
-        '1': (binding_buffer_wells, binding_buffer_vol),
-        '2': (binding_buffer_wells, binding_buffer_vol),
+        '1': (binding_buffer_liquid, binding_buffer_vol),
+        '2': (binding_buffer_liquid, binding_buffer_vol),
         
         # Tris buffer goes in columns "4" and "5"
-        '4': (tris_wells, tris_vol),
-        '5': (tris_wells, tris_vol),
+        '4': (tris_liquid, tris_vol),
+        '5': (tris_liquid, tris_vol),
         
         # Eluate goes in columns "7" through "12"
         '7': (eluate_liquid, eluate_vol),
@@ -202,7 +190,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # FUNCTION 4: BEAD MIXING (for when beads are in solution)
     def bead_mixing(reps, vol, speed=0.5):
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        for index, column in enumerate(sample_wells):
             if not p1000m.has_tip: 
                 pick_up_or_refill(p1000m)
             
@@ -308,7 +296,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 19: Remove and discard supernatant
     protocol.comment("Step 19: Remove and discard supernatant.")
     if not skip_supremoval:
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        for index, column in enumerate(sample_wells):
             remove_sup(75,75,waste_well=-1)
             p1000m.air_gap(20)
             p1000m.drop_tip()
@@ -328,7 +316,7 @@ def run(protocol: protocol_api.ProtocolContext):
             pick_up_or_refill(p1000m)
             source = wash_buffer[0]
 
-            for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+            for index, column in enumerate(sample_wells):
                 if index < 2:
                     source = wash_buffer[0]
                 elif index < 4:
@@ -342,7 +330,7 @@ def run(protocol: protocol_api.ProtocolContext):
                 # p1000m.blow_out()
 
             # mix all
-            for column in sample_plate.columns()[:NUM_COLUMNS]:
+            for index, column in enumerate(sample_wells):
                 if not p1000m.has_tip:
                     pick_up_or_refill(p1000m)
                 wash_mixing(p1000m, volume=144,reps=8)
@@ -353,11 +341,10 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(minutes=2*BEAD_RUN)
 
             # remove supernatant
-            for column in sample_plate.columns()[:NUM_COLUMNS]:
+            for column in sample_wells:
                 remove_sup(130,50,waste_well=repeat)
                 p1000m.air_gap(20)
                 p1000m.drop_tip()
-              
           
         protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
@@ -367,7 +354,7 @@ def run(protocol: protocol_api.ProtocolContext):
     if not skip_1stelution:
         source = tris[0][0]
 
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        for index, column in enumerate(sample_wells):
             if index > 2:
                 source = tris[1][0]
 
@@ -404,7 +391,7 @@ def run(protocol: protocol_api.ProtocolContext):
     if not skip_rebinding:
         source = rna_binding_buffer[0][0]
 
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        for index, column in enumerate(sample_wells):
             # use second column of Binding buffer for sample columns >3
             if index > 2:
                 source = rna_binding_buffer[1][0]
@@ -421,7 +408,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=5*DRY_RUN)
         
         # slow mixing and rebinding #2
-        for column in sample_plate.columns()[:NUM_COLUMNS]:
+        for column in sample_wells:
             bead_mixing(10, 80, speed=0.3) # 10 mixes with 80µl
         
         protocol.delay(minutes=5*DRY_RUN)
@@ -435,7 +422,7 @@ def run(protocol: protocol_api.ProtocolContext):
         # STEP 34-35: Remove and discard supernatant, move off magnet
         protocol.comment("Step 34: Remove and discard supernatant.")
         if not skip_supremoval2:
-            for column in sample_plate.columns()[:NUM_COLUMNS]:
+            for column in sample_wells:
                 remove_sup(75,75,waste_well=-1)
                 p1000m.air_gap(20)
                 p1000m.drop_tip()
@@ -446,7 +433,7 @@ def run(protocol: protocol_api.ProtocolContext):
     protocol.comment("Step 36: Wash the beads once with 200 μl of Wash Buffer, mix thoroughly.")
 
     if not skip_finalwash:
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        for index, column in enumerate(sample_wells):
 
             pick_up_or_refill(p1000m)
 
@@ -470,7 +457,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # TODO Double check the top(), bottom(2) and rate parameters
     if not skip_washremoval:
-        for column in sample_plate.columns()[:NUM_COLUMNS]:
+        for column in sample_wells:
             pick_up_or_refill(p1000m)
             
             p1000m.move_to(column[0].top())
@@ -497,9 +484,11 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # STEP 40: Last elution in thermocycler
     if not skip_2ndelution:
+        protocol.comment("STEP 40: Final elution with Tris, mix and heat in thermocycler.")
+
         source = tris[0][0]
         
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        for index, column in enumerate(sample_wells):
             if index > 2:
                 source = tris[1][0]
         
@@ -536,23 +525,29 @@ def run(protocol: protocol_api.ProtocolContext):
         thermocycler.open_lid()
         
         # STEP 41: place tubes on magnetic rack
+        protocol.comment("STEP 41: Put on maget for 2 minutes")
+        
         protocol.move_labware(labware=sample_plate, new_location=mag_block, use_gripper=True)
         protocol.delay(minutes=2*DRY_RUN)
     
         # STEP 42: collect purified mRNA
-        for index, column in enumerate(sample_plate.columns()[:NUM_COLUMNS]):
+        protocol.comment("STEP 42: Transfer supernatant into clean wells.")
+        
+        for index, source_column in enumerate(sample_wells):
             pick_up_or_refill(p50m)
             
-            p50m.move_to(column[0].top())
+            source_well = source_column[0]
+            target_well = finaleluate_wells[index][0]
+            
+            p50m.move_to(source_well.top())
             p50m.air_gap(10)
-            p50m.aspirate(COLLECTION_VOL, column[0].bottom(1), rate=0.2)
+            p50m.aspirate(COLLECTION_VOL, source_well.bottom(1), rate=0.2)
             protocol.delay(seconds=1)
 
-            target_well = eluate[index][0]  # access corresponding eluate columns on the cold plate
             p50m.dispense(COLLECTION_VOL+5, target_well.bottom(1), rate=0.2)
             protocol.delay(seconds=2)
             p50m.blow_out()
-            slow_tip_withdrawal(p50m, column[0], -2)
+            slow_tip_withdrawal(p50m, target_well, -2)
             p50m.drop_tip()
             
     
