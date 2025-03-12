@@ -38,8 +38,6 @@ def run(protocol: protocol_api.ProtocolContext):
     skip_finalelution = False
 
     # VOLUME AND DISTANCE SETTINGS
-    deadvol_reservoir = 1500
-    deadvol_plate = 10
     clearance_reservoir = 2
     clearance_bead_pellet = 1.5
     clearance_beadresuspension = 3
@@ -212,7 +210,7 @@ def run(protocol: protocol_api.ProtocolContext):
             side_touch_w_blowout(pipette,column[0],pos=-5)                  
             pipette.drop_tip()
 
-    # FUNCTION 6: PELLET MIXING (for when beads are in a pellet)
+    # FUNCTION 5: PELLET MIXING (for when beads are in a pellet)
     def pellet_mixing(pipette, column, volume,reps):
         
         # rotating locations to rinse down the bead "ring" from all sides
@@ -230,7 +228,7 @@ def run(protocol: protocol_api.ProtocolContext):
         pipette.mix(reps, volume, column[0].bottom(2), rate=0.5)
         slow_tip_withdrawal(pipette, column[0], -2)
         
-    # FUNCTION 5: REMOVE SUPERNATANT
+    # FUNCTION 6: REMOVE SUPERNATANT
     def remove_sup(pipette,column,volume1,volume2,waste_well):       
         pick_up_or_refill(pipette)
         
@@ -244,6 +242,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(seconds=1)
         pipette.blow_out()
 
+    # FUNCTION 7: ADD BEADS With MIXING
     def add_beads(destination_wells, bead_volume, mix_volume_multiplier, final_mix_volume):
         """
         Perform bead mixing and distribution steps
@@ -287,10 +286,10 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.delay(seconds=0.5)
             p50m.mix(5, final_mix_volume, destination_wells[index][0].bottom(1), 1)
             slow_tip_withdrawal(p50m, destination_wells[index][0], -2)
-            side_touch_w_blowout(p50m,destination_wells[index][0],pos=-8,xoffset=1)
+            side_touch_w_blowout(p50m,destination_wells[index][0],pos=-7,xoffset=1)
             p50m.drop_tip()
     
-    # FUNCTION 7: ETHANOL RINSE (washing on the magnet block)
+    # FUNCTION 8: ETHANOL RINSE (washing on the magnet block)
     def ethanol_rinse(sup_pip, sup_vol, plate, wells, waste):
         # move plate to magnet for 2 min
         protocol.move_labware(labware=plate, new_location=mag_block, use_gripper=True)
@@ -346,7 +345,8 @@ def run(protocol: protocol_api.ProtocolContext):
     ## 4. Reverse transcription and strand-switching
     # STEP 4.3 - mix RNA input and VN primer mix
     if not skip_firststrand:
-        
+        protocol.comment("Step 4.3 - transfer polyA mRNA input and add VN primer.")
+
         # distribute 3.5µl MM1 to required wells on the sample plate
         transfer_vol = 3.5
         dead_vol = 2
@@ -364,14 +364,16 @@ def run(protocol: protocol_api.ProtocolContext):
         polyA_vol = 7.5
         for src_col, dest_col in zip(polyA_wells, firststrand_wells):
             pick_up_or_refill(p50m)
-            p50m.aspirate(polyA_vol, src_col[0].bottom(1), rate=0.5)
-            p50m.dispense(polyA_vol, dest_col[0].bottom(1), rate=1.0)
-            p50m.mix(3, polyA_vol, dest_col[0].bottom(1), 0.5)
+            p50m.aspirate(polyA_vol, src_col[0].bottom(2), rate=0.5)
+            p50m.dispense(polyA_vol, dest_col[0].bottom(2), rate=1.0)
+            p50m.mix(3, polyA_vol, dest_col[0].bottom(2), 0.5)
             side_touch_w_blowout(p50m,dest_col[0],pos=-11,xoffset=2)
             p50m.drop_tip()
 
     # STEP 4.5 - heat to 65ºC for 5 minutes and immediately move to cold plate
     if not skip_65_5min:
+        protocol.comment("Step 4.5 - primer annealing")
+
         thermocycler.set_lid_temperature(80)
         thermocycler.open_lid()
         protocol.move_labware(labware=plate2_sample, new_location=thermocycler, use_gripper=True)
@@ -384,16 +386,20 @@ def run(protocol: protocol_api.ProtocolContext):
             
     # STEP 4.6-4.11 - add strand switch primer mix and Maxima H Minus Rev transcriptase
     if not skip_strandswitch:
+        protocol.comment("Step 4.6-4.11 - add strand switch primer mix and Maxima H Minus Rev transcriptase")
+        
         for index, column in enumerate(firststrand_wells):
             pick_up_or_refill(p50m)
-            p50m.aspirate(9, MM2[0].bottom(1), rate=0.5)
-            p50m.dispense(9, column[0].bottom(1), rate=0.5)
-            p50m.mix(3, 15, column[0].bottom(1), rate=0.5)
+            p50m.aspirate(9, MM2[0].bottom(2), rate=0.5)
+            p50m.dispense(9, column[0].bottom(2), rate=0.5)
+            p50m.mix(3, 15, column[0].bottom(2), rate=0.5)
             side_touch_w_blowout(p50m, column[0], pos=-9, xoffset=1)
             p50m.drop_tip()
 
     # STEP 4.12 - incubate at 42ºC for 90 minutes and 85ºC for 5 minutes
     if not skip_42_90min:
+        protocol.comment("Step 4.12 - reverse transcripttion and strand-switching")
+
         thermocycler.set_lid_temperature(95)
         thermocycler.open_lid()
         protocol.move_labware(labware=plate2_sample, new_location=thermocycler, use_gripper=True)
@@ -407,9 +413,10 @@ def run(protocol: protocol_api.ProtocolContext):
     ## 5. RNA degradation and second strand synthesis
     # STEP 5.3-5.4 - add RNase and incubate at 37ºC for 10 minutes
     if not skip_rnase:
+        protocol.comment("Step 5.3 - add RNAse")
+        
         # Transfer rnase to clean wells and mix
         RNAse_vol=1
-        
         for index, column in enumerate(firststrand_wells):
             pick_up_or_refill(p50m)
             p50m.aspirate(RNAse_vol, rnase[0].bottom(1), rate=0.5)
@@ -423,6 +430,8 @@ def run(protocol: protocol_api.ProtocolContext):
         thermocycler.open_lid()
         protocol.move_labware(labware=plate2_sample, new_location=thermocycler, use_gripper=True)
         thermocycler.close_lid()
+
+        protocol.comment("Step 5.4 - RNA degradation")
         thermocycler.set_block_temperature(37, hold_time_minutes=10*DRY_RUN, block_max_volume=20)
         thermocycler.set_block_temperature(20)
         thermocycler.open_lid()
@@ -430,6 +439,8 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # STEP 5.5+5.7 - Mix beads before adding to the plate
     if not skip_bead17:
+        protocol.comment("Step 5.5+5.7 - Mix beads and add 17µl to the first strand wells")
+        
         add_beads(
             destination_wells=firststrand_wells,
             bead_volume=17,
@@ -442,9 +453,13 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=2.5*DRY_RUN)
 
     if not skip_wash1: 
+        protocol.comment("Step 5.10-5.13 - first round ethanol rinse x2")
+            
         ethanol_rinse(sup_pip=p50m, sup_vol=30, plate=plate2_sample, wells=firststrand_wells, waste=waste)
 
     if not skip_elution:
+        protocol.comment("Step 5.14 - remove sup and add 20µl NFW")
+
         for index, column in enumerate(firststrand_wells):
             pick_up_or_refill(p50m)
             p50m.aspirate(20, NFW.bottom(clearance_reservoir))
@@ -459,6 +474,8 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.drop_tip()
         
         # incubate 10 min total with slow mixing (Hula mixer replacement)  
+        protocol.comment("Step 5.15 - incubate 10 minutes with slow mixing")
+        
         protocol.delay(minutes=3*DRY_RUN)
         slow_mixing(p50m, firststrand_wells, reps=5, vol=15, speed=0.3)
         protocol.delay(minutes=3*DRY_RUN)
@@ -470,6 +487,8 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=1.5*BEAD_RUN)
 
         # transfer eluate to fresh wells
+        protocol.comment("Step 5.16-5.17 - remove eluate to fresh wells")
+
         for index, column in enumerate(firststrand_wells):
             pick_up_or_refill(p50m)
             p50m.move_to(column[0].top())
@@ -477,19 +496,21 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.aspirate(20, column[0].bottom(clearance_bead_pellet), rate=0.1)        
             protocol.delay(seconds=1)
             p50m.dispense(30, secondstrand_wells[index][0].bottom(1), rate=0.2)
-            side_touch_w_blowout(p50m,secondstrand_wells[index][0],pos=-8,xoffset=1)
+            side_touch_w_blowout(p50m,secondstrand_wells[index][0],pos=-8,xoffset=1.5)
             p50m.drop_tip()
         
         # move plate off magnet
         protocol.move_labware(labware=plate2_sample, new_location="D2", use_gripper=True)
 
     if not skip_2ndstrand:
+        protocol.comment("Step 5.18-5.19 - add MM3 and second strand synthesis")
+
         # distribute MM3 to required wells on the sample plate
         for index, column in enumerate(secondstrand_wells):
             pick_up_or_refill(p50m)
             p50m.aspirate(30, MM3[0].bottom(1), rate=1)
             p50m.dispense(30, column[0].bottom(1), rate=1)
-            p50m.mix(3, 40, column[0].bottom(1), rate=0.5)
+            p50m.mix(3, 40, column[0].bottom(1), rate=1)
             side_touch_w_blowout(p50m, column[0], pos=-7, xoffset=1)  # Check if -9 offset is correct
             p50m.drop_tip()
         
@@ -505,6 +526,8 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.move_labware(labware=plate2_sample, new_location="D2", use_gripper=True)
 
     if not skip_bead40:
+        protocol.comment("Step 5.20-5.22 - Mix beads and add 40µl to the second strand wells")
+
         add_beads(
             destination_wells=secondstrand_wells,
             bead_volume=40,
@@ -517,13 +540,12 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=2.5*DRY_RUN)
 
     if not skip_wash2: 
+        protocol.comment("Step 5.25-5.27 - second round ethanol rinse x2")
+
         ethanol_rinse(sup_pip=p1000m, sup_vol=90, plate=plate2_sample, wells=secondstrand_wells, waste=waste)
-    # TODO change back to 80 after figuring out the volume tracking error
 
     if not skip_finalelution:
-        # TODO remove this section once tiprack exchange logic is finished or obsolete
-        # move polyA plate to staging area and move eluate plate to deck
-        # protocol.move_labware(labware=plate1_polyA, new_location="B4", use_gripper=True)
+        protocol.comment("Step 5.29 - add 21µl NFW for final elution")
 
         # elute cDNA from beads
         for index, column in enumerate(secondstrand_wells):
@@ -540,14 +562,20 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.drop_tip()
         
         # incubate 10 min total with slow mixing (Hula mixer replacement)  
+        protocol.comment("Step 5.30 - final 10 minute incubation with slow mixing")
+
         protocol.delay(minutes=3*DRY_RUN)
         slow_mixing(p50m, secondstrand_wells, reps=5, vol=17, speed=0.3)
         protocol.delay(minutes=3*DRY_RUN)
         slow_mixing(p50m, secondstrand_wells, reps=5, vol=17, speed=0.3)
         protocol.delay(minutes=4*DRY_RUN)
 
+        protocol.comment("Step 5.31 - pellet beads")   
+        
         protocol.move_labware(labware=plate2_sample, new_location=mag_block, use_gripper=True)
         protocol.delay(minutes=2*BEAD_RUN)
+
+        protocol.comment("Step 5.32 - remove eluate to fresh wells")        
 
         # transfer eluate to fresh wells
         for index, column in enumerate(secondstrand_wells):
