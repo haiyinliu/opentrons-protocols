@@ -16,7 +16,7 @@ requirements = {
 def run(protocol: protocol_api.ProtocolContext):
     #======== PARAMETERS ========
     # SAMPLE PARAMETERS
-    NUM_SAMPLES = 8  # Define the number of samples (up to 48)
+    NUM_SAMPLES = 48  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
     
     ELUTION_VOL = 15    # µl of Tris to resuspend the beads in at the last elution
@@ -57,35 +57,34 @@ def run(protocol: protocol_api.ProtocolContext):
     
     # COLUMN 2 
     mag_block = protocol.load_module('magneticBlockV1', 'A2')
+    tiprack_50ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B2')
     reservoir = protocol.load_labware('nest_12_reservoir_15ml', 'C2')
     sample_plate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "D2")
      
     # COLUMN 3 
     tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A3')
     tiprack_200ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B3')
-    tiprack_50ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'C3')
+    tiprack_200ul_3 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C3')
     waste_chute = protocol.load_waste_chute()
      
     # COLUMN 4 - staging area
-    tiprack_200ul_3 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A4')
-    tiprack_200ul_4 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B4')
-    tiprack_50ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'C4')
+    tiprack_200ul_4 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A4')
+    tiprack_200ul_5 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B4')
+    tiprack_200ul_6 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C4')
     # D4 is an empty slot to move tip boxes to
 
     #======== PIPETTES ========
     p50m = protocol.load_instrument('flex_8channel_50', 'right')
     p1000m = protocol.load_instrument('flex_8channel_1000', 'left')
 
-    # define "active" and "staging" tip boxes for each pipette
     p50m.tip_racks = [tiprack_50ul_1]
-    p50_staging = [tiprack_50ul_2]
 
-    p1000m.tip_racks = [tiprack_200ul_1,tiprack_200ul_2]
-    p1000_staging = [tiprack_200ul_3,tiprack_200ul_4]
+    # p1000m pipette has "active" and "staging" tip boxes for swapping
+    p1000m.tip_racks = [tiprack_200ul_1,tiprack_200ul_2,tiprack_200ul_3]
+    p1000_staging = [tiprack_200ul_4,tiprack_200ul_5,tiprack_200ul_6]
 
     # tracking if the staging tip boxes have been swapped in
     has_swapped = {
-        "p50_multi_flex": False,
         "p1000_multi_flex": False
     } 
 
@@ -177,54 +176,67 @@ def run(protocol: protocol_api.ProtocolContext):
     # FUNCTION 1: PIPETTE PICK UP
     def pick_up_or_swap(pipette):
         """
-        Attempt to pick up a tip. If out of tips, swap appropriate number of racks.
-        For p1000m, swaps 2 racks. For p50m, swaps 1 rack.
+        Try picking up a tip. If out of tips:
+        - p50m: Pause for manual refill.
+        - p1000m: If not swapped yet, swap 3 active racks, otherwise do full manual refill.
         """
-        pip_name = pipette.name  # e.g. "flex_8channel_50" or "flex_8channel_1000"
+        pip_name = pipette.name  # e.g. 'p1000_multi_flex' or 'p50_multi_flex'
         try:
             pipette.pick_up_tip()
         except OutOfTipsError:
-            protocol.comment(f"{pip_name} is out of tips. Swapping racks from staging...")
+            protocol.comment(f"{pip_name} is out of tips.")
+            
+            # --- p50m logic: always manual refill ---
+            if pipette == p50m:
+                protocol.pause("The 50µL tip box is empty. Please replace it manually.")
+                pipette.reset_tipracks()
+                pipette.pick_up_tip()
+                return
 
-            # Check if we've already swapped for this pipette
+            # --- p1000m logic: triple swap for the 3 active racks, if not done yet ---
             if has_swapped[pip_name]:
-                # Already swapped once => manual refill
-                protocol.pause(f"No more {pip_name} tip boxes left. Please replace all tip racks manually.")
-                pipette.reset_tipracks()  # Mark everything as fresh
+                # Already did our triple-swap => must do a full manual replacement now
+                protocol.pause("No more 200µL tip boxes left. Please replace racks manually.")
+                pipette.reset_tipracks()
                 pipette.pick_up_tip()
                 return
             else:
-                # Not swapped yet => do triple-move              
-                if pipette == p1000m:
-                    # Swap #1
-                    protocol.move_labware(tiprack_200ul_1, "D4", use_gripper=True)
-                    protocol.move_labware(tiprack_200ul_3, "A3", use_gripper=True)
-                    protocol.move_labware(tiprack_200ul_1, "A4", use_gripper=True)
-                    if tiprack_200ul_1 in pipette.tip_racks:
-                        idx = pipette.tip_racks.index(tiprack_200ul_1)
-                        pipette.tip_racks[idx] = tiprack_200ul_3
+                # Not swapped yet => do the 3 triple-moves at once
+                protocol.comment(f"{pip_name} is out of tips. Swapping racks from staging...")
 
-                    # Swap #2
-                    protocol.move_labware(tiprack_200ul_2, "D4", use_gripper=True)
-                    protocol.move_labware(tiprack_200ul_4, "B3", use_gripper=True)
-                    protocol.move_labware(tiprack_200ul_2, "B4", use_gripper=True)
-                    if tiprack_200ul_2 in pipette.tip_racks:
-                        idx = pipette.tip_racks.index(tiprack_200ul_2)
-                        pipette.tip_racks[idx] = tiprack_200ul_4
+                # SWAP #1:
+                # tiprack_200ul_1 -> D4, tiprack_200ul_4 -> A3, tiprack_200ul_1 -> A4
+                protocol.move_labware(tiprack_200ul_1, "D4", use_gripper=True)
+                protocol.move_labware(tiprack_200ul_4, "A3", use_gripper=True)
+                protocol.move_labware(tiprack_200ul_1, "A4", use_gripper=True)
+                if tiprack_200ul_1 in pipette.tip_racks:
+                    idx = pipette.tip_racks.index(tiprack_200ul_1)
+                    pipette.tip_racks[idx] = tiprack_200ul_4
 
-                elif pipette == p50m:
-                    # Single rack swap
-                    protocol.move_labware(tiprack_50ul_1, "D4", use_gripper=True)
-                    protocol.move_labware(tiprack_50ul_2, "C3", use_gripper=True)
-                    protocol.move_labware(tiprack_50ul_1, "C4", use_gripper=True)
-                    if tiprack_50ul_1 in pipette.tip_racks:
-                        idx = pipette.tip_racks.index(tiprack_50ul_1)
-                        pipette.tip_racks[idx] = tiprack_50ul_2
+                # SWAP #2:
+                # tiprack_200ul_2 -> D4, tiprack_200ul_5 -> B3, tiprack_200ul_2 -> B4
+                protocol.move_labware(tiprack_200ul_2, "D4", use_gripper=True)
+                protocol.move_labware(tiprack_200ul_5, "B3", use_gripper=True)
+                protocol.move_labware(tiprack_200ul_2, "B4", use_gripper=True)
+                if tiprack_200ul_2 in pipette.tip_racks:
+                    idx = pipette.tip_racks.index(tiprack_200ul_2)
+                    pipette.tip_racks[idx] = tiprack_200ul_5
 
-                has_swapped[pip_name] = True  # now used up the auto-swap
-            
-            pipette.reset_tipracks()
-            pipette.pick_up_tip()
+                # SWAP #3:
+                # tiprack_200ul_3 -> D4, tiprack_200ul_6 -> C3, tiprack_200ul_3 -> C4
+                protocol.move_labware(tiprack_200ul_3, "D4", use_gripper=True)
+                protocol.move_labware(tiprack_200ul_6, "C3", use_gripper=True)
+                protocol.move_labware(tiprack_200ul_3, "C4", use_gripper=True)
+                if tiprack_200ul_3 in pipette.tip_racks:
+                    idx = pipette.tip_racks.index(tiprack_200ul_3)
+                    pipette.tip_racks[idx] = tiprack_200ul_6
+
+                # Mark that we've done our triple-swap
+                has_swapped[pip_name] = True
+                
+                # Refresh tip tracking & pick up
+                pipette.reset_tipracks()
+                pipette.pick_up_tip()
 
     # FUNCTION 2: SLOW PIPETTE WITHDRAWAL    
     def slow_tip_withdrawal(pipette, well, z=0, delay_seconds=0):
