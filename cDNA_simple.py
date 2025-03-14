@@ -16,7 +16,7 @@ requirements = {
 def run(protocol: protocol_api.ProtocolContext):
     #======== PARAMETERS ========
     # SAMPLE PARAMETERS
-    NUM_SAMPLES = 8  # Define the number of samples (up to 48)
+    NUM_SAMPLES = 48  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
     ELUTION_VOL = 21    # µl of NFW to resuspend the beads in at the last elution
 
@@ -38,6 +38,8 @@ def run(protocol: protocol_api.ProtocolContext):
     skip_finalelution = False
 
     # VOLUME AND DISTANCE SETTINGS
+    deadvol_reservoir = 2000
+    deadvol_plate = 10
     clearance_reservoir = 2
     clearance_bead_pellet = 1.5
     clearance_beadresuspension = 3
@@ -69,7 +71,6 @@ def run(protocol: protocol_api.ProtocolContext):
     # D4 is an empty slot to move tip boxes to
  
     #======== PIPETTES ========
-    # load active tips for each pipette
     p50m = protocol.load_instrument('flex_8channel_50', 'right')
     p1000m = protocol.load_instrument('flex_8channel_1000', 'left')
     
@@ -116,6 +117,16 @@ def run(protocol: protocol_api.ProtocolContext):
     waste = [reservoir.wells_by_name()[well] for well in ['A9','A10', 'A11', 'A12']]
 
     #======== DEFINING LIQUIDS ========   
+    # Define volumes
+    ethanol_vol = 0.2 * 4 * NUM_COLUMNS * 8 + deadvol_reservoir
+    MM1_vol = 4.5 * NUM_COLUMNS + deadvol_plate
+    MM2_vol = 9 * NUM_COLUMNS + deadvol_plate
+    MM3_vol = 30 * NUM_COLUMNS + deadvol_plate
+    beads_vol = 57  * NUM_COLUMNS + deadvol_plate
+    NFW_vol = 20 * NUM_COLUMNS + deadvol_plate
+    polyA_samples_vol = 15
+    eluate_vol = 20
+    
     ethanol_liquid = protocol.define_liquid(
         name="Ethanol",
         description="80% Ethanol in NFW in reservoir",
@@ -163,6 +174,44 @@ def run(protocol: protocol_api.ProtocolContext):
         description="Final eluate",
         display_color="#FFD700"  # Gold
     )
+
+    for column in polyA_wells:
+        for well in column:
+            well.load_liquid(liquid=polyA_samples_liquid, volume=polyA_samples_vol)
+
+    # reservoir
+    for column in reservoir.columns()[0:2]:
+        for well in column: 
+            well.load_liquid(liquid=ethanol_liquid, volume=ethanol_vol)
+
+    # cold plate
+    # dictionary for mapping liquids on the plate 
+    liquid_mapping = {
+        # Master Mixes in columns "1", "2", and "3"
+        '1': (MM1_liquid, MM1_vol),
+        '2': (MM2_liquid, MM2_vol),
+        '3': (MM3_liquid, MM3_vol),
+
+        # beads goe in columns "4" and "5"
+        '4': (beads_liquid, beads_vol),
+        '5': (beads_liquid, beads_vol),
+
+        # NFW goes in column "6"
+        '6': (NFW_liquid, NFW_vol),
+
+        # Eluate goes in columns "7" through "12"
+        '7': (eluate_liquid, eluate_vol),
+        '8': (eluate_liquid, eluate_vol),
+        '9': (eluate_liquid, eluate_vol),
+        '10': (eluate_liquid, eluate_vol),
+        '11': (eluate_liquid, eluate_vol),
+        '12': (eluate_liquid, eluate_vol)
+    }
+
+    # loop over the mapping to load liquids into column
+    for col_name, (liquid, vol) in liquid_mapping.items():
+        for well in cold_plate.columns_by_name()[col_name]:
+            well.load_liquid(liquid=liquid, volume=vol)
 
     #======== RUN SETUP ========
     # HELPER FUNCTIONS 
