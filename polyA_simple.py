@@ -3,7 +3,7 @@ from opentrons import types
 from opentrons.protocol_api.labware import OutOfTipsError
 
 metadata = {
-    "protocolName": "NEBNExt High Input Poly(A) mRNA isolation - autoswap",
+    "protocolName": "NEBNExt High Input Poly(A) mRNA isolation",
     "description": "Protocol to work with the NEBNext poly(A) mRNA isolation kit NEB #E3370S",
     "author": "Haiyin Liu"
     }
@@ -16,23 +16,23 @@ requirements = {
 def run(protocol: protocol_api.ProtocolContext):
     #======== PARAMETERS ========
     # SAMPLE PARAMETERS
-    NUM_SAMPLES = 40  # Define the number of samples (up to 48)
+    NUM_SAMPLES = 48  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
     
     ELUTION_VOL = 15    # µl of Tris to resuspend the beads in at the last elution
     COLLECTION_VOL = 12    # µl of Tris to collect from the beads at the final magnet step
 
     # TESTING PARAMETERS
-    DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
-    BEAD_RUN = 0.01        # use 0.01 for testing without beads
+    DRY_RUN = 1      # use 0.01 to shorten wait times if it is dry run, otherwise 1
+    BEAD_RUN = 1        # use 0.01 for testing without beads
 
     skip_mixbeadsandrna = False     # Toggle when testing certain blocks, same below
-    skip_thermocycler1 = True
+    skip_thermocycler1 = False
     skip_beadmix = False
     skip_supremoval = False
     skip_washes = False
     skip_1stelution = False
-    skip_thermocycler2 = True
+    skip_thermocycler2 = False
     skip_rebinding = False
     skip_supremoval2 = False
     skip_finalwash = False
@@ -57,37 +57,22 @@ def run(protocol: protocol_api.ProtocolContext):
     
     # COLUMN 2 
     mag_block = protocol.load_module('magneticBlockV1', 'A2')
-    tiprack_50ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'B2')
     reservoir = protocol.load_labware('nest_12_reservoir_15ml', 'C2')
     sample_plate = protocol.load_labware("opentrons_96_wellplate_200ul_pcr_full_skirt", "D2")
      
     # COLUMN 3 
     tiprack_200ul_1 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A3')
     tiprack_200ul_2 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B3')
-    tiprack_200ul_3 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C3')
+    tiprack_50ul = protocol.load_labware('opentrons_flex_96_tiprack_50ul', 'C3')
     waste_chute = protocol.load_waste_chute()
      
     # COLUMN 4 - staging area
-    tiprack_200ul_4 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'A4')
-    tiprack_200ul_5 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'B4')
-    tiprack_200ul_6 = protocol.load_labware('opentrons_flex_96_tiprack_200ul', 'C4')
-    # D4 is an empty slot to move tip boxes to
-
+    # empty
+ 
     #======== PIPETTES ========
-    p50m = protocol.load_instrument('flex_8channel_50', 'right')
-    p1000m = protocol.load_instrument('flex_8channel_1000', 'left')
-
-    p50m.tip_racks = [tiprack_50ul_1]
-
-    # p1000m pipette has "active" and "staging" tip boxes for swapping
-    p1000m.tip_racks = [tiprack_200ul_1,tiprack_200ul_2,tiprack_200ul_3]
-    p1000_staging = [tiprack_200ul_4,tiprack_200ul_5,tiprack_200ul_6]
-
-    # tracking if the staging tip boxes have been swapped in
-    has_swapped = {
-        "p1000_multi_flex": False
-    } 
-
+    p1000m = protocol.load_instrument('flex_8channel_1000', 'left', tip_racks=[tiprack_200ul_1,tiprack_200ul_2])
+    p50m = protocol.load_instrument('flex_8channel_50', 'right', tip_racks=[tiprack_50ul])
+     
     #======== REAGENT WELLS ========
     # sample plate 
     sample_wells = sample_plate.columns()[:NUM_COLUMNS]
@@ -174,69 +159,15 @@ def run(protocol: protocol_api.ProtocolContext):
     #======== RUN SETUP ========
     # HELPER FUNCTIONS 
     # FUNCTION 1: PIPETTE PICK UP
-    def pick_up_or_swap(pipette):
-        """
-        Try picking up a tip. If out of tips:
-        - p50m: Pause for manual refill.
-        - p1000m: If not swapped yet, swap 3 active racks, otherwise do full manual refill.
-        """
-        pip_name = pipette.name  # e.g. 'p1000_multi_flex' or 'p50_multi_flex'
+    def pick_up_or_refill(pipette):
+        """Pick up a tip or pause for replacement if needed."""
         try:
             pipette.pick_up_tip()
         except OutOfTipsError:
-            protocol.comment(f"{pip_name} is out of tips.")
-            
-            # --- p50m logic: always manual refill ---
-            if pipette == p50m:
-                protocol.pause("The 50µL tip box is empty. Please replace it manually.")
-                pipette.reset_tipracks()
-                pipette.pick_up_tip()
-                return
-
-            # --- p1000m logic: triple swap for the 3 active racks, if not done yet ---
-            if has_swapped[pip_name]:
-                # Already did our triple-swap => must do a full manual replacement now
-                protocol.pause("No more 200µL tip boxes left. Please replace racks manually.")
-                pipette.reset_tipracks()
-                pipette.pick_up_tip()
-                return
-            else:
-                # Not swapped yet => do the 3 triple-moves at once
-                protocol.comment(f"{pip_name} is out of tips. Swapping racks from staging...")
-
-                # SWAP #1:
-                # tiprack_200ul_1 -> D4, tiprack_200ul_4 -> A3, tiprack_200ul_1 -> A4
-                protocol.move_labware(tiprack_200ul_1, "D4", use_gripper=True)
-                protocol.move_labware(tiprack_200ul_4, "A3", use_gripper=True)
-                protocol.move_labware(tiprack_200ul_1, "A4", use_gripper=True)
-                if tiprack_200ul_1 in pipette.tip_racks:
-                    idx = pipette.tip_racks.index(tiprack_200ul_1)
-                    pipette.tip_racks[idx] = tiprack_200ul_4
-
-                # SWAP #2:
-                # tiprack_200ul_2 -> D4, tiprack_200ul_5 -> B3, tiprack_200ul_2 -> B4
-                protocol.move_labware(tiprack_200ul_2, "D4", use_gripper=True)
-                protocol.move_labware(tiprack_200ul_5, "B3", use_gripper=True)
-                protocol.move_labware(tiprack_200ul_2, "B4", use_gripper=True)
-                if tiprack_200ul_2 in pipette.tip_racks:
-                    idx = pipette.tip_racks.index(tiprack_200ul_2)
-                    pipette.tip_racks[idx] = tiprack_200ul_5
-
-                # SWAP #3:
-                # tiprack_200ul_3 -> D4, tiprack_200ul_6 -> C3, tiprack_200ul_3 -> C4
-                protocol.move_labware(tiprack_200ul_3, "D4", use_gripper=True)
-                protocol.move_labware(tiprack_200ul_6, "C3", use_gripper=True)
-                protocol.move_labware(tiprack_200ul_3, "C4", use_gripper=True)
-                if tiprack_200ul_3 in pipette.tip_racks:
-                    idx = pipette.tip_racks.index(tiprack_200ul_3)
-                    pipette.tip_racks[idx] = tiprack_200ul_6
-
-                # Mark that we've done our triple-swap
-                has_swapped[pip_name] = True
-                
-                # Refresh tip tracking & pick up
-                pipette.reset_tipracks()
-                pipette.pick_up_tip()
+            protocol.pause(
+             "Please refill the {} tip boxes manually.".format(pipette.mount))
+            pipette.reset_tipracks()
+            pipette.pick_up_tip()
 
     # FUNCTION 2: SLOW PIPETTE WITHDRAWAL    
     def slow_tip_withdrawal(pipette, well, z=0, delay_seconds=0):
@@ -259,7 +190,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # FUNCTION 4: BEAD MIXING (for when beads are in solution)
     def bead_mixing(pipette, well, reps, vol, speed=0.5):
         if not pipette.has_tip:
-            pick_up_or_swap(pipette)
+            pick_up_or_refill(pipette)
         # slow mixes
         pipette.mix(reps, vol, well.bottom(3), rate=speed)
         slow_tip_withdrawal(pipette, well, -2)
@@ -270,7 +201,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # FUNCTION 5: REMOVE SUPERNATANT
     def remove_sup(well,volume1,volume2,waste_well):       
-        pick_up_or_swap(p1000m)
+        pick_up_or_refill(p1000m)
         
         p1000m.move_to(well.top())
         p1000m.air_gap(20)
@@ -304,6 +235,7 @@ def run(protocol: protocol_api.ProtocolContext):
         pipette.mix(reps, volume, well.bottom(3), rate=0.5)
         slow_tip_withdrawal(pipette, well, -2)
         
+
     # FUNCTION X: LIQUID HEIGHT IN A WELL
     # legacy code, I have not included this as we don't seem to need to calculate the height
     # TODO figure out if this is needed, and if so, import math
@@ -384,7 +316,7 @@ def run(protocol: protocol_api.ProtocolContext):
             protocol.move_labware(labware=sample_plate, new_location="D2", use_gripper=True)
 
             # dispense wash buffer to all bead pellets first to avoid beads drying
-            pick_up_or_swap(p1000m)
+            pick_up_or_refill(p1000m)
             source = wash_buffer[0]
 
             for index, column in enumerate(sample_wells):
@@ -405,7 +337,7 @@ def run(protocol: protocol_api.ProtocolContext):
             # mix all
             for index, column in enumerate(sample_wells):
                 if not p1000m.has_tip:
-                    pick_up_or_swap(p1000m)
+                    pick_up_or_refill(p1000m)
                 wash_mixing(p1000m, well=column[0], volume=144,reps=8)
                 p1000m.drop_tip()
 
@@ -431,7 +363,7 @@ def run(protocol: protocol_api.ProtocolContext):
             if index > 2:
                 source = tris[1][0]
 
-            pick_up_or_swap(p50m)
+            pick_up_or_refill(p50m)
             p50m.aspirate(50, source.bottom(1))
             
             # dispense Tris quickly on the side of pellet and mix
@@ -470,7 +402,7 @@ def run(protocol: protocol_api.ProtocolContext):
                 source = rna_binding_buffer[1][0]
             
             # add 2x Binding buffer
-            pick_up_or_swap(p1000m)
+            pick_up_or_refill(p1000m)
             p1000m.aspirate(50, source.bottom(1))
             p1000m.dispense(50, column[0].bottom(2))
             
@@ -507,7 +439,7 @@ def run(protocol: protocol_api.ProtocolContext):
     if not skip_finalwash:
         for index, column in enumerate(sample_wells):
 
-            pick_up_or_swap(p1000m)
+            pick_up_or_refill(p1000m)
 
             ### TODO this section tracks the liquid height in the reservoir, check if needd 
             # wash_buffer[-1].liq_vol -= 180*p1000m.channels
@@ -530,7 +462,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # TODO Double check the top(), bottom(2) and rate parameters
     if not skip_washremoval:
         for column in sample_wells:
-            pick_up_or_swap(p1000m)
+            pick_up_or_refill(p1000m)
             
             p1000m.move_to(column[0].top())
             p1000m.air_gap(20)
@@ -565,7 +497,7 @@ def run(protocol: protocol_api.ProtocolContext):
             if index > 2:
                 source = tris[1][0]
         
-            pick_up_or_swap(p50m)
+            pick_up_or_refill(p50m)
             p50m.aspirate(ELUTION_VOL, source.bottom(1))
             
             # dispense Tris quickly on the side of pellet and mix
@@ -607,7 +539,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.comment("STEP 42: Transfer supernatant into clean wells.")
         
         for index, source_column in enumerate(sample_wells):
-            pick_up_or_swap(p50m)
+            pick_up_or_refill(p50m)
             
             source_well = source_column[0]
             target_well = finaleluate_wells[index][0]
@@ -622,5 +554,4 @@ def run(protocol: protocol_api.ProtocolContext):
             p50m.blow_out()
             slow_tip_withdrawal(p50m, target_well, -2)
             p50m.drop_tip()
-            
-    
+        
