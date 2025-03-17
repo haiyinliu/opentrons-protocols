@@ -16,13 +16,14 @@ requirements = {
 def run(protocol: protocol_api.ProtocolContext):
     #======== PARAMETERS ========
     # SAMPLE PARAMETERS
-    NUM_SAMPLES = 48  # Define the number of samples (up to 48)
+    NUM_SAMPLES = 24  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
+
     ELUTION_VOL = 21    # µl of NFW to resuspend the beads in at the last elution
 
     # TESTING PARAMETERS
-    DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
-    BEAD_RUN = 0.01        # use 0.01 for testing without beads, otherwise 1 
+    DRY_RUN = 1      # use 0.01 to shorten wait times if it is dry run, otherwise 1
+    BEAD_RUN = 1        # use 0.01 for testing without beads, otherwise 1 
 
     skip_firststrand = False     # Toggle when testing certain blocks, same below
     skip_65_5min = True
@@ -261,7 +262,11 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # FUNCTION 5: PELLET MIXING (for when beads are in a pellet)
     def pellet_mixing(pipette, column, volume,reps):
-        
+        if pipette == p1000m:
+            smallmix_vol = volume / 4
+        elif pipette == p50m:
+            smallmix_vol = volume / 2
+    
         # rotating locations to rinse down the bead "ring" from all sides
         locations = [
             types.Point(x=offset_x, y=0, z=0),
@@ -271,7 +276,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
         for point in locations:
             loc = column[0].bottom(3).move(point)
-            pipette.mix(3, volume / 2, loc, rate=2)
+            pipette.mix(3, smallmix_vol, loc, rate=2)
         
         # slower mixes with whole volume
         pipette.mix(reps, volume, column[0].bottom(2), rate=0.5)
@@ -361,7 +366,7 @@ def run(protocol: protocol_api.ProtocolContext):
                     source = ethanol[2]
 
                 pick_up_or_refill(p1000m)
-                p1000m.aspirate(180, ethanol[0].bottom(clearance_reservoir))
+                p1000m.aspirate(180, source.bottom(clearance_reservoir))
                 p1000m.dispense(180, column[0].bottom(5), rate = 0.1)
                 p1000m.air_gap(20)  # prevent ethanol from dripping
                 p1000m.drop_tip()
@@ -436,7 +441,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 4.6-4.11 - add strand switch primer mix and Maxima H Minus Rev transcriptase
     if not skip_strandswitch:
         protocol.comment("Step 4.6-4.11 - add strand switch primer mix and Maxima H Minus Rev transcriptase")
-        
+
         for index, column in enumerate(firststrand_wells):
             pick_up_or_refill(p50m)
             p50m.aspirate(9, MM2[0].bottom(2), rate=0.5)
@@ -463,7 +468,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 5.3-5.4 - add RNase and incubate at 37ºC for 10 minutes
     if not skip_rnase:
         protocol.comment("Step 5.3 - add RNAse")
-        
+
         # Transfer rnase to clean wells and mix
         RNAse_vol=1
         for index, column in enumerate(firststrand_wells):
@@ -479,7 +484,7 @@ def run(protocol: protocol_api.ProtocolContext):
         thermocycler.open_lid()
         protocol.move_labware(labware=plate2_sample, new_location=thermocycler, use_gripper=True)
         thermocycler.close_lid()
-
+    
         protocol.comment("Step 5.4 - RNA degradation")
         thermocycler.set_block_temperature(37, hold_time_minutes=10*DRY_RUN, block_max_volume=20)
         thermocycler.set_block_temperature(20)
@@ -489,7 +494,6 @@ def run(protocol: protocol_api.ProtocolContext):
     # STEP 5.5+5.7 - Mix beads before adding to the plate
     if not skip_bead17:
         protocol.comment("Step 5.5+5.7 - Mix beads and add 17µl to the first strand wells")
-        
         add_beads(
             destination_wells=firststrand_wells,
             bead_volume=17,
@@ -503,7 +507,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     if not skip_wash1: 
         protocol.comment("Step 5.10-5.13 - first round ethanol rinse x2")
-            
+    
         ethanol_rinse(sup_pip=p50m, sup_vol=30, plate=plate2_sample, wells=firststrand_wells, waste=waste)
 
     if not skip_elution:
@@ -524,7 +528,7 @@ def run(protocol: protocol_api.ProtocolContext):
         
         # incubate 10 min total with slow mixing (Hula mixer replacement)  
         protocol.comment("Step 5.15 - incubate 10 minutes with slow mixing")
-        
+
         protocol.delay(minutes=3*DRY_RUN)
         slow_mixing(p50m, firststrand_wells, reps=5, vol=15, speed=0.3)
         protocol.delay(minutes=3*DRY_RUN)
@@ -590,7 +594,6 @@ def run(protocol: protocol_api.ProtocolContext):
 
     if not skip_wash2: 
         protocol.comment("Step 5.25-5.27 - second round ethanol rinse x2")
-
         ethanol_rinse(sup_pip=p1000m, sup_vol=90, plate=plate2_sample, wells=secondstrand_wells, waste=waste)
 
     if not skip_finalelution:
@@ -620,7 +623,7 @@ def run(protocol: protocol_api.ProtocolContext):
         protocol.delay(minutes=4*DRY_RUN)
 
         protocol.comment("Step 5.31 - pellet beads")   
-        
+
         protocol.move_labware(labware=plate2_sample, new_location=mag_block, use_gripper=True)
         protocol.delay(minutes=2*BEAD_RUN)
 

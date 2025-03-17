@@ -16,13 +16,14 @@ requirements = {
 def run(protocol: protocol_api.ProtocolContext):
     #======== PARAMETERS ========
     # SAMPLE PARAMETERS
-    NUM_SAMPLES = 40  # Define the number of samples (up to 48)
+    NUM_SAMPLES = 16  # Define the number of samples (up to 48)
     NUM_COLUMNS = (NUM_SAMPLES + 7) // 8  # Calculate number of columns for 96-well plates
+    
     ELUTION_VOL = 21    # µl of NFW to resuspend the beads in at the last elution
 
     # TESTING PARAMETERS
-    DRY_RUN = 0.01      # use 0.01 to shorten wait times if it is dry run, otherwise 1
-    BEAD_RUN = 0.01        # use 0.01 for testing without beads, otherwise 1 
+    DRY_RUN = 0.1      # use 0.01 to shorten wait times if it is dry run, otherwise 1
+    BEAD_RUN = 0.1       # use 0.01 for testing without beads, otherwise 1 
 
     skip_firststrand = False     # Toggle when testing certain blocks, same below
     skip_65_5min = True
@@ -306,8 +307,12 @@ def run(protocol: protocol_api.ProtocolContext):
             pipette.drop_tip()
 
     # FUNCTION 5: PELLET MIXING (for when beads are in a pellet)
-    def pellet_mixing(pipette, column, volume,reps):
-        
+    def pellet_mixing(pipette, column, volume,reps): 
+        if pipette == p1000m:
+            smallmix_vol = volume / 4
+        elif pipette == p50m:
+            smallmix_vol = volume / 2
+
         # rotating locations to rinse down the bead "ring" from all sides
         locations = [
             types.Point(x=offset_x, y=0, z=0),
@@ -317,10 +322,10 @@ def run(protocol: protocol_api.ProtocolContext):
 
         for point in locations:
             loc = column[0].bottom(3).move(point)
-            pipette.mix(3, volume / 2, loc, rate=2)
+            pipette.mix(3, smallmix_vol, loc, rate=2)
         
         # slower mixes with whole volume
-        pipette.mix(reps, volume, column[0].bottom(2), rate=0.5)
+        pipette.mix(reps, volume, column[0].bottom(3), rate=0.3)
         slow_tip_withdrawal(pipette, column[0], -2)
         
     # FUNCTION 6: REMOVE SUPERNATANT
@@ -407,8 +412,10 @@ def run(protocol: protocol_api.ProtocolContext):
                     source = ethanol[2]
 
                 pick_up_or_swap(p1000m)
-                p1000m.aspirate(180, ethanol[0].bottom(clearance_reservoir))
-                p1000m.dispense(180, column[0].bottom(5), rate = 0.1)
+                p1000m.move_to(source.top())
+                p1000m.air_gap(10)
+                p1000m.aspirate(180, source.bottom(clearance_reservoir))
+                p1000m.dispense(190, column[0].bottom(5), rate = 0.1)
                 p1000m.air_gap(20)  # prevent ethanol from dripping
                 p1000m.drop_tip()
 
